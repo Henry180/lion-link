@@ -1,0 +1,2 @@
+const mongoose = require("mongoose");
+module.exports = mongoose.model("Story", new mongoose.Schema({ author: { type: mongoose.Schema.Types.ObjectId, ref: "User" }, media: { url: String, type: { type: String, enum: ["image", "video"] } }, expiresAt: { type: Date, default: () => new Date(Date.now() + 86400000), index: { expires: 0 } } }, { timestamps: true }));

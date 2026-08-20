@@ -1,0 +1,78 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#007a3d" />
+    <link rel="manifest" href="manifest.webmanifest" />
+    <title>Lion Link | Your campus, connected</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Playfair+Display:wght@700;800&display=swap" rel="stylesheet" />
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <div class="app-shell">
+      <aside class="sidebar">
+        <a class="brand" href="#feed" aria-label="Lion Link home"><span class="brand-mark">L</span><span>Lion <b>Link</b></span></a>
+        <nav class="main-nav" aria-label="Main navigation">
+          <button class="nav-link active" data-view="feed"><span>⌂</span> Home</button>
+          <button class="nav-link" data-view="announcements"><span>◉</span> Announcements <i>3</i></button>
+          <button class="nav-link" data-view="messages"><span>✉</span> Messages</button>
+          <button class="nav-link" data-view="events"><span>◇</span> Events</button>
+          <button class="nav-link" data-view="profile"><span>♙</span> Profile</button>
+          <button class="nav-link" data-view="admin"><span>⚙</span> Lion Link Admin</button>
+        </nav>
+        <div class="sidebar-actions"><button class="theme-toggle" id="theme-toggle" type="button"><span>◐</span> Dark mode</button><button class="post-button" id="open-post">Create post</button></div>
+        <div class="account-wrap"><button class="account" id="account-profile" type="button"><div class="avatar avatar-gold">JS</div><div><strong>Jordan Smith</strong><small>@jordansmith</small></div></button><label class="story-add" title="Add story">+<input id="story-upload" type="file" accept="image/*,video/*" hidden></label></div>
+      </aside>
+
+      <main class="main-content">
+        <header class="mobile-header"><a class="brand" href="#feed"><span class="brand-mark">L</span> Lion <b>Link</b></a><button class="mobile-theme" id="mobile-theme" aria-label="Toggle dark mode">◐</button></header>
+        <section class="view active" id="feed-view">
+          <header class="page-header"><div><p class="eyebrow">YOUR CAMPUS, CONNECTED</p><h1>Home feed</h1></div><button class="icon-button" aria-label="More feed options">•••</button></header>
+          <section class="announcement-strip" id="pinned-announcement"><div class="megaphone">📣</div><div><span>PINNED ANNOUNCEMENT</span><strong>Welcome back, UNN Lions &amp; Lionesses!</strong><p>Stay connected with news, updates, and campus life.</p></div><button class="close-strip" aria-label="Dismiss announcement">×</button></section>
+          <section class="composer"><div class="avatar avatar-gold">JS</div><div class="composer-body"><textarea id="post-text" maxlength="280" placeholder="What's happening on campus?"></textarea><input id="media-input" type="file" accept="image/*,video/*" multiple hidden /><div id="media-preview" class="media-preview" hidden></div><div class="composer-footer"><div><button class="tool-button media-picker" id="media-picker" title="Add photos or videos" type="button">▣</button><button class="tool-button" data-add="😊" title="Add emoji" type="button">☺</button><span id="character-count">0 / 280</span></div><button class="small-post" id="submit-post">Post</button></div></div></section>
+          <div class="feed-label"><span>Latest from your community</span><button id="refresh-feed">↻ Refresh</button></div>
+          <section id="post-feed" class="post-feed" aria-live="polite"></section>
+        </section>
+
+        <section class="view" id="announcements-view">
+          <header class="page-header"><div><p class="eyebrow">DON'T MISS A THING</p><h1>Announcements</h1></div></header>
+          <div class="announcement-hero"><span>📣</span><div><h2>Stay in the loop</h2><p>Official news and important updates from your school.</p></div></div><button class="admin-entry" id="open-admin">⚙ Lion Link Admin — post an official announcement</button>
+          <section id="announcement-list" class="announcement-list"></section>
+        </section>
+
+        <section class="view messages-layout" id="messages-view">
+          <header class="page-header messages-title"><div><p class="eyebrow">KEEP IN TOUCH</p><h1>Messages</h1></div><button class="icon-button" id="open-user-search" aria-label="Find people">+</button></header>
+          <div class="chat-shell"><aside class="conversation-list"><label class="search"><span>⌕</span><input placeholder="Search messages" /></label><div id="conversations"></div></aside><section class="chat-panel"><div class="chat-empty" id="chat-empty"><span>✉</span><h2>Your messages</h2><p>Select a conversation to start chatting.</p></div><div id="active-chat" hidden></div></section></div>
+        </section>
+
+        <section class="view placeholder-view" id="events-view"><span>◇</span><h1>Campus events</h1><p>Your upcoming events will appear here.</p></section>
+        <section class="view" id="profile-view"><div class="profile-cover" id="profile-cover"></div><div class="profile-content"><div class="profile-top"><div class="profile-avatar-wrap"><button class="avatar avatar-gold profile-avatar" type="button" aria-label="Open profile photo or story">JS</button><label class="profile-story-add" title="Add a story" hidden>+<input id="profile-story-upload" type="file" accept="image/*,video/*" hidden></label></div><div class="profile-buttons"><button class="edit-profile">Edit profile</button><button class="message-profile" hidden>Message</button><button class="follow-profile" hidden>Follow</button></div></div><h1 id="profile-name">Jordan Smith</h1><p class="profile-handle" id="profile-handle">@jordansmith</p><p class="profile-bio">UNN student · Sharing campus moments and meeting new people.</p><p class="profile-meta">⌖ University of Nigeria, Nsukka &nbsp; · &nbsp; ◷ Joined September 2024</p><div class="profile-stats"><span><b>124</b> Following</span><span><b>86</b> Followers</span></div><div class="profile-links"><button id="share-app">↗ Share Lion Link</button><button id="install-app">⇩ Download Lion Link</button><a href="mailto:lionlink@unn.edu.ng">✉ Contact us</a><button id="help-link">? Help &amp; privacy</button><button id="logout">Log out</button><button id="admin-code">Use admin code</button></div></div><div class="profile-tabs"><button class="selected" data-profile-tab="posts">Posts</button><button data-profile-tab="replies">Replies</button><button data-profile-tab="media">Media</button><button data-profile-tab="likes">Likes</button></div><div id="profile-posts" class="post-feed"></div></section>
+        <section class="view" id="admin-view"><header class="page-header"><div><p class="eyebrow">OFFICIAL CAMPUS ACCOUNT</p><h1>Lion Link Admin</h1></div><span class="admin-badge">Admin demo</span></header><div class="admin-panel"><div><span class="verified">✓</span><h2>Lion Link Admin</h2><p>Post and manage official announcements for Lion Link.</p></div><form id="announcement-form"><input id="announcement-title" required maxlength="80" placeholder="Announcement title" /><textarea id="announcement-body" required maxlength="240" placeholder="Write the official update..."></textarea><input id="announcement-media" type="file" accept="image/*,video/*" multiple /><div id="announcement-preview" class="media-preview" hidden></div><button class="small-post">Publish announcement</button></form></div><section class="admin-posts"><h2>Manage announcements</h2><div id="admin-announcements"></div></section></section>
+      </main>
+
+      <aside class="right-rail">
+        <section class="rail-card"><div class="card-heading"><h2>Upcoming events</h2><button>See all</button></div><div class="event"><time><b>SEP</b><strong>18</strong></time><div><strong>Student Club Fair</strong><p>12:00 PM · UNN Campus</p></div></div><div class="event"><time><b>SEP</b><strong>20</strong></time><div><strong>Lions Social Night</strong><p>7:00 PM · Campus Centre</p></div></div></section>
+        <section class="rail-card"><div class="card-heading"><h2>Who to follow</h2><button>Refresh</button></div><div id="people-list"></div></section>
+        <footer>© <span id="copyright-year"></span> Lion Link · <button data-info="help">Help</button> · <button data-info="privacy">Privacy</button> · <button data-info="terms">Terms</button></footer>
+      </aside>
+    </div>
+    <nav class="bottom-nav" aria-label="Mobile navigation"><button data-view="feed" class="active"><span>⌂</span>Home</button><button data-view="announcements"><span>◉</span>Updates</button><button data-view="messages"><span>✉</span>Messages</button><button data-view="profile"><span>♙</span>Profile</button></nav>
+    <div class="toast" id="toast" role="status"></div>
+    <button id="floating-post" class="post-button" type="button" hidden aria-label="Create post">+</button>
+    <div class="edit-modal" id="quick-post-modal" hidden><form class="edit-card" id="quick-post-form"><button class="modal-close" type="button" data-close-modal="quick-post-modal" aria-label="Close post composer">×</button><h2>Create post</h2><textarea id="quick-post-text" maxlength="280" required placeholder="What's happening on campus?"></textarea><input id="quick-post-media" type="file" accept="image/*,video/*" multiple><div id="quick-post-preview" class="media-preview" hidden></div><button class="small-post">Post</button></form></div>
+    <div class="edit-modal" id="user-search-modal" hidden><section class="edit-card"><button class="modal-close" type="button" data-close-modal="user-search-modal" aria-label="Close people search">×</button><h2>Find people</h2><input id="user-search-input" type="search" placeholder="Search by name or username" autocomplete="off"><div id="user-search-results" class="people-results"><p class="empty-profile">Search registered Lion Link users.</p></div></section></div>
+    <div class="edit-modal" id="info-modal" hidden><section class="edit-card"><button class="modal-close" type="button" data-close-modal="info-modal" aria-label="Close information">×</button><h2 id="info-title"></h2><p id="info-content"></p></section></div>
+    <aside class="mobile-drawer mobile-left" id="mobile-left-drawer" hidden></aside><aside class="mobile-drawer mobile-right" id="mobile-right-drawer" hidden></aside><button class="drawer-scrim" id="drawer-scrim" hidden aria-label="Close menu"></button>
+    <div class="edit-modal" id="reels-modal" hidden><button class="modal-close" id="close-reels" type="button">×</button><div class="edit-card reels-card"><div id="reels-content"></div><div class="reels-actions"><button id="reel-prev" type="button">‹ Previous</button><button id="reel-next" type="button">Next ›</button></div></div></div>
+    <div class="media-modal" id="media-modal" hidden><button class="modal-close" data-close-modal="media-modal" aria-label="Close gallery">×</button><div id="media-modal-content"></div></div>
+    <div class="edit-modal" id="edit-modal" hidden><form class="edit-card" id="edit-profile-form"><button class="modal-close" type="button" data-close-modal="edit-modal" aria-label="Close profile editor">×</button><h2>Edit profile</h2><label>Display name<input id="edit-name" maxlength="30" /></label><label>Bio<textarea id="edit-bio" maxlength="160"></textarea></label><label>Profile photo<input id="edit-avatar" type="file" accept="image/*" /></label><label>Cover photo<input id="edit-cover" type="file" accept="image/*" /></label><button class="small-post">Save changes</button></form></div>
+    <div class="login-overlay" id="login-overlay" aria-modal="true" role="dialog"><form class="login-card" id="login-form"><span class="brand-mark">L</span><h1>Welcome to Lion Link</h1><p>Create your account before joining the community.</p><label>Action<select id="login-mode"><option value="signup">Create account</option><option value="login">Sign in</option></select></label><label id="login-name-field">Display name<input id="login-name" maxlength="30" /></label><label id="login-username-field">Unique username<input id="login-username" maxlength="20" placeholder="e.g. lioness23" /></label><label>UNN email / username<input id="login-email" required /></label><label>Password<input id="login-password" type="password" required minlength="6" autocomplete="current-password" /></label><button class="post-button" type="submit">Continue</button><small>Users must sign up once; then they can sign in.</small></form></div>
+   
+
+    <link rel="stylesheet" href="styles.css" />
+<script src="frontend.js"></script>
+  </body>
+</html>
