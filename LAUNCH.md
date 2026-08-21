@@ -33,5 +33,5 @@ This project now includes a Cloudflare Pages Function in `functions/api/[[path]]
 8. In Render/Railway set `CLIENT_ORIGIN` to exactly that Pages address (no ending slash), then redeploy the backend.
 9. Test in a private/incognito browser: create an account, log out, and sign in. Also create, edit, and delete a comment. Comments are editable for 15 minutes; deletion remains available.
 10. To diagnose a connection issue, open `https://YOUR-PAGES-ADDRESS/api/auth/me`. A `401 Authentication required` response proves the bridge is working. `503` means the Pages variable is missing; `502` means the backend is unavailable.
-
+<!-- deployment update -->
 For a custom domain, open your Pages project > **Custom domains**, follow the DNS instructions, then update `CLIENT_ORIGIN` on your backend to the new `https://` address and redeploy it.
