@@ -18,8 +18,28 @@ let databaseReady = false;
 // MIDDLEWARE
 // =====================================================
 
-const allowedOrigins = (process.env.CLIENT_ORIGIN || "").split(",").map(value => value.trim()).filter(Boolean);
-app.use(cors({ origin(origin, callback) { if (process.env.NODE_ENV !== "production" || !origin || allowedOrigins.includes(origin)) return callback(null, true); return callback(new Error("Origin is not allowed")); } }));
+const allowedOrigins = (process.env.CLIENT_ORIGIN || "")
+  .split(",")
+  .map(value => value.trim())
+  .filter(Boolean);
+
+app.use(cors({
+  origin(origin, callback) {
+    if (process.env.NODE_ENV !== "production" || !origin) {
+      return callback(null, true);
+    }
+
+    const isAllowed =
+      allowedOrigins.includes(origin) ||
+      /^https:\/\/[a-z0-9-]+\.lion-link\.pages\.dev$/.test(origin);
+
+    if (isAllowed) {
+      return callback(null, true);
+    }
+
+    return callback(new Error("Origin is not allowed"));
+  }
+}));
 app.use(express.json({ limit: "12mb" }));
 app.use("/api", (req, res, next) => {
   if (!databaseReady) return res.status(503).json({ message: "Lion Link is reconnecting to its database. Please try again in a moment." });
