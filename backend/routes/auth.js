@@ -85,19 +85,20 @@ router.post("/register", register);
 router.post("/signup", register);
 
 router.get("/me", auth, async (req, res) => {
-  const user = await User.findById(req.user.userId).select("name email username role bio profileImage coverImage");
+  const user = await User.findById(req.user.userId).select("name email username role bio profileImage coverImage location");
   if (!user) return res.status(404).json({ message: "User not found" });
-  res.json({ user: { id: user._id, name: user.name, email: user.email, username: user.username, role: user.role, bio: user.bio, profileImage: user.profileImage, coverImage: user.coverImage } });
+  res.json({ user: { id: user._id, name: user.name, email: user.email, username: user.username, role: user.role, bio: user.bio, profileImage: user.profileImage, coverImage: user.coverImage, location: user.location } });
 });
 
 router.patch("/me", auth, async (req, res) => {
   const user = await User.findById(req.user.userId);
   user.name = String(req.body.name || user.name).trim().slice(0, 30);
   user.bio = String(req.body.bio || "").trim().slice(0, 160);
+  user.location = String(req.body.location || user.location || "University of Nigeria, Nsukka").trim().slice(0, 100);
   if (req.body.profileImage) user.profileImage = req.body.profileImage;
   if (req.body.coverImage) user.coverImage = req.body.coverImage;
   await user.save();
-  res.json({ user: { id:user._id, name:user.name, email:user.email, username:user.username, role:user.role, bio:user.bio, profileImage:user.profileImage, coverImage:user.coverImage } });
+  res.json({ user: { id:user._id, name:user.name, email:user.email, username:user.username, role:user.role, bio:user.bio, profileImage:user.profileImage, coverImage:user.coverImage, location:user.location } });
 });
 
 router.post("/become-admin", auth, async (req, res) => {

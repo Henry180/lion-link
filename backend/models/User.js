@@ -46,6 +46,13 @@ const userSchema = new mongoose.Schema(
       default: ""
     },
 
+    location: {
+      type: String,
+      trim: true,
+      maxlength: 100,
+      default: "University of Nigeria, Nsukka"
+    },
+
     role: {
       type: String,
       enum: ["student", "admin"],

@@ -89,7 +89,7 @@ const baseRenderProfile = renderProfile;
 renderProfile = function(user) {
   baseRenderProfile(user);
   const joined = user?.createdAt ? new Date(user.createdAt).toLocaleDateString(undefined, { month: 'long', year: 'numeric' }) : null;
-  if (joined) $('.profile-meta').innerHTML = `⌖ University of Nigeria, Nsukka &nbsp; · &nbsp; ◷ Joined ${esc(joined)}`;
+  if (joined) $('.profile-meta').innerHTML = `⌖ ${esc(user.location || 'University of Nigeria, Nsukka')} &nbsp; · &nbsp; ◷ Joined ${esc(joined)}`;
 };
 
 const basePostMarkup = postMarkup;
@@ -156,8 +156,10 @@ async function postStoryWithCaption(file) {
 openStory = function(story) {
   const mine = (story.author?._id || story.author?.id) === me?.id;
   const controls = mine ? `<div class="story-controls"><button data-edit-story="${story._id}">Edit caption</button><button data-delete-story="${story._id}">Delete story</button></div>` : '';
-  $('#media-modal-content').innerHTML = `${story.media.type === 'video' ? `<div class="modal-media"><video controls autoplay src="${story.media.url}"></video></div>` : `<div class="modal-media"><img src="${story.media.url}" alt="Story"></div>`}<p class="story-caption">${esc(story.caption || '')}</p>${controls}`;
+  const viewers = mine ? `<details class="story-viewers"><summary>◉ ${story.viewerCount || story.viewers?.length || 0} views</summary>${(story.viewers || []).map(viewer => `<p>${esc(viewer.name)} <small>@${esc(viewer.username)}</small></p>`).join('') || '<p>No viewers yet.</p>'}</details>` : '';
+  $('#media-modal-content').innerHTML = `${story.media.type === 'video' ? `<div class="modal-media"><video controls autoplay src="${story.media.url}"></video></div>` : `<div class="modal-media"><img src="${story.media.url}" alt="Story"></div>`}<p class="story-caption">${esc(story.caption || '')}</p>${viewers}${controls}`;
   $('#media-modal').hidden = false;
+  if (!mine) api(`/stories/${story._id}/view`, { method: 'POST' }).then(({ viewerCount }) => { story.viewerCount = viewerCount; }).catch(() => {});
 };
 document.addEventListener('click', async event => {
   const d = event.target.dataset;
@@ -177,6 +179,10 @@ document.addEventListener('touchend', event => {
     event.stopImmediatePropagation();
   }
 }, true);
+
+document.addEventListener('click', event => { if (event.target.closest('.mobile-drawer [data-view]')) closeDrawers(); }, true);
+const baseLoadPostsWithLoading = loadPosts;
+loadPosts = async function() { if (!posts.length) $('#post-feed').innerHTML = '<p class="empty-profile">Loading latest posts…</p>'; return baseLoadPostsWithLoading(); };
 
 // In-app notifications for likes, comments, follows, and unread messages.
 const notificationsView = document.createElement('section');
@@ -293,3 +299,16 @@ document.addEventListener('click', async event => {
 });
 const identityWithReports = identity;
 identity = function() { identityWithReports(); loadReports(); };
+
+const locationEditor = document.createElement('label');
+locationEditor.innerHTML = 'Location<input id="edit-location" maxlength="100" placeholder="University of Nigeria, Nsukka" />';
+$('#edit-avatar').closest('label').before(locationEditor);
+$('.edit-profile').onclick = () => { $('#edit-name').value = me.name; $('#edit-bio').value = me.bio || ''; $('#edit-location').value = me.location || 'University of Nigeria, Nsukka'; $('#edit-modal').hidden = false; };
+$('#edit-profile-form').onsubmit = async event => {
+  event.preventDefault();
+  try {
+    const avatar = $('#edit-avatar').files[0], cover = $('#edit-cover').files[0];
+    me = (await api('/auth/me', { method: 'PATCH', body: JSON.stringify({ name: $('#edit-name').value, bio: $('#edit-bio').value, location: $('#edit-location').value, profileImage: avatar ? await fileData(avatar).then(item => item.url) : me.profileImage, coverImage: cover ? await fileData(cover).then(item => item.url) : me.coverImage }) })).user;
+    identity(); $('#edit-modal').hidden = true; toast('Profile updated.');
+  } catch (error) { toast(error.message); }
+};

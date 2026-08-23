@@ -3,7 +3,7 @@ const User = require("../models/User");
 const auth = require("../middleware/auth");
 const Notification = require("../models/Notification");
 
-const publicUser = user => ({ id: user._id, name: user.name, username: user.username, bio: user.bio, profileImage: user.profileImage, coverImage: user.coverImage, followers: user.followers?.length || 0, following: user.following?.length || 0, createdAt: user.createdAt });
+const publicUser = user => ({ id: user._id, name: user.name, username: user.username, bio: user.bio, profileImage: user.profileImage, coverImage: user.coverImage, location: user.location, followers: user.followers?.length || 0, following: user.following?.length || 0, createdAt: user.createdAt });
 
 router.get("/suggestions/all", auth, async (req, res) => {
   const users = await User.find({ _id: { $ne: req.user.userId } }).select("name username bio profileImage followers following createdAt").sort({ createdAt: -1 });
@@ -30,7 +30,7 @@ router.get("/:username/following", auth, followersList);
 router.get("/:username", auth, async (req, res) => {
   const username = String(req.params.username).toLowerCase().replace(/^@/, "");
   const [user, viewer] = await Promise.all([
-    User.findOne({ username }).select("name username bio profileImage coverImage followers following createdAt"),
+    User.findOne({ username }).select("name username bio profileImage coverImage location followers following createdAt"),
     User.findById(req.user.userId).select("following")
   ]);
   if (!user) return res.status(404).json({ message: "User not found" });

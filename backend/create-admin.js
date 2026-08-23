@@ -10,7 +10,15 @@ if (![name, username, email, password].every(Boolean) || password.length < 6) {
 (async () => {
   await mongoose.connect(process.env.MONGODB_URI);
   const normalized = username.toLowerCase().replace(/^@/, "");
-  if (await User.exists({ $or: [{ username: normalized }, { email: email.toLowerCase() }] })) throw Error("Username or email already exists");
-  await User.create({ name, username: normalized, email: email.toLowerCase(), password: await bcrypt.hash(password, 10), role: "admin" });
-  console.log("Admin account created."); await mongoose.disconnect();
+  const existing = await User.findOne({ $or: [{ username: normalized }, { email: email.toLowerCase() }] });
+  const passwordHash = await bcrypt.hash(password, 10);
+  if (existing) {
+    existing.name = name; existing.username = normalized; existing.email = email.toLowerCase(); existing.password = passwordHash; existing.role = "admin";
+    await existing.save();
+    console.log("Admin account updated.");
+  } else {
+    await User.create({ name, username: normalized, email: email.toLowerCase(), password: passwordHash, role: "admin" });
+    console.log("Admin account created.");
+  }
+  await mongoose.disconnect();
 })().catch(error => { console.error(error.message); process.exit(1); });
