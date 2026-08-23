@@ -85,9 +85,9 @@ router.post("/register", register);
 router.post("/signup", register);
 
 router.get("/me", auth, async (req, res) => {
-  const user = await User.findById(req.user.userId).select("name email username role bio profileImage coverImage location");
+  const user = await User.findById(req.user.userId).select("name email username role bio profileImage coverImage location followers following");
   if (!user) return res.status(404).json({ message: "User not found" });
-  res.json({ user: { id: user._id, name: user.name, email: user.email, username: user.username, role: user.role, bio: user.bio, profileImage: user.profileImage, coverImage: user.coverImage, location: user.location } });
+  res.json({ user: { id: user._id, name: user.name, email: user.email, username: user.username, role: user.role, bio: user.bio, profileImage: user.profileImage, coverImage: user.coverImage, location: user.location, followers: user.followers.length, following: user.following.length } });
 });
 
 router.patch("/me", auth, async (req, res) => {

@@ -48,7 +48,7 @@ router.post("/:username/follow", auth, async (req, res) => {
   target.followers = alreadyFollowing ? target.followers.filter(id => !id.equals(actor._id)) : [...target.followers, actor._id];
   await Promise.all([actor.save(), target.save()]);
   if (!alreadyFollowing) await Notification.create({ recipient: target._id, actor: actor._id, type: "follow" });
-  res.json({ following: !alreadyFollowing, followers: target.followers.length });
+  res.json({ following: !alreadyFollowing, followers: target.followers.length, followingCount: actor.following.length });
 });
 
 module.exports = router;

@@ -1,5 +1,6 @@
 // Same-site API in production. Cloudflare Pages forwards /api via its Pages Function.
-const API_URL = window.LION_LINK_API_URL || (location.protocol === 'file:' || location.hostname === 'localhost' || location.hostname === '127.0.0.1' ? 'http://localhost:5000/api' : '/api');
+// API_URL is the host; api() adds the /api prefix exactly once.
+const API_URL = window.LION_LINK_API_URL || (location.protocol === 'file:' || location.hostname === 'localhost' || location.hostname === '127.0.0.1' ? 'http://localhost:5000' : '');
 const $ = s => document.querySelector(s);
 let token = localStorage.getItem('lionLinkToken');
 let me = null, posts = [], announcements = [], conversations = [], activeChat = null, selectedMedia = [], stories=[], viewedProfile=null, quickMedia=[], announcementMedia=[];
@@ -7,10 +8,10 @@ const esc = value => { const el=document.createElement('div'); el.textContent=va
 const initials = name => String(name||'?').split(' ').map(x=>x[0]).slice(0,2).join('').toUpperCase();
 const when = date => { const s=Math.max(0,Math.floor((Date.now()-new Date(date))/1000)); return s<60?`${s}s`:s<3600?`${Math.floor(s/60)}m`:s<86400?`${Math.floor(s/3600)}h`:`${Math.floor(s/86400)}d`; };
 function toast(message){const el=$('#toast');el.textContent=message;el.classList.add('show');setTimeout(()=>el.classList.remove('show'),2500)}
-async function api(path, options={}) { let response;try{response=await fetch(API_URL+"/api"+path,{...options,headers:{'Content-Type':'application/json',...(token?{Authorization:`Bearer ${token}`}:{})}});}catch{throw Error('Cannot reach Lion Link. Start the backend and try again.');}const text=response.status===204?'':await response.text();let data={};try{data=text?JSON.parse(text):{};}catch{data={message:'Lion Link received an unexpected response. Please try again.'};}if(!response.ok)throw Error(data.message||`Request failed (${response.status})`);return data; }
+async function api(path, options={}) { let response;try{response=await fetch(API_URL+"/api"+path,{...options,headers:{'Content-Type':'application/json',...(token?{Authorization:`Bearer ${token}`}:{})}});}catch{throw Error('Cannot reach Lion Link. Start the backend and try again.');}const text=response.status===204?'':await response.text();let data={};try{data=text?JSON.parse(text):{};}catch{data={message:'Lion Link received an unexpected response. Please try again.'};}if(!response.ok){const error=Error(data.message||`Request failed (${response.status})`);error.status=response.status;throw error;}return data; }
 function show(view){if(view==='profile'&&me&&!viewedProfile)renderProfile(me);document.querySelectorAll('.view').forEach(x=>x.classList.toggle('active',x.id===`${view}-view`));document.querySelectorAll('[data-view]').forEach(x=>x.classList.toggle('active',x.dataset.view===view));}
 function identity(){if(!me)return;$('.account strong').textContent=me.name;$('.account small').textContent='@'+me.username;$('.account .avatar').textContent=initials(me.name);$('.composer>.avatar').textContent=initials(me.name);$('[data-view="admin"]').hidden=me.role!=='admin';renderProfile(me);}
-function postMarkup(post){const mine=post.author?._id===me?.id||post.author?.id===me?.id;const user=post.author?.username||'';const hasStory=stories.some(s=>s.author?.username===user);const likes=Array.isArray(post.likes)?post.likes:[];const comments=Array.isArray(post.comments)?post.comments:[];const media=post.media||[];const avatar=post.author?.profileImage?`style="background-image:url('${post.author.profileImage}');background-size:cover"`:'';const tiles=media.slice(0,4).map((m,i)=>`<button class="gallery-item" type="button" data-open-media="${post._id}:${i}" aria-label="Open post media ${i+1}">${m.type==='video'?`<video muted preload="metadata" src="${m.url}"></video>`:`<img src="${m.url}" alt="Post media ${i+1}">`}${i===3&&media.length>4?`<span class="media-more">+${media.length-4}</span>`:''}</button>`).join('');const commentMarkup=c=>{const commentLikes=Array.isArray(c.likes)?c.likes:[];const liked=commentLikes.some(id=>(id._id||id).toString()===me?.id);const isMine=(c.author?._id||c.author?.id||c.author)?.toString()===me?.id?.toString();const editable=isMine&&c.createdAt&&Date.now()-new Date(c.createdAt).getTime()<=15*60*1000;return `<div class="comment"><div class="comment-line"><p><b>${esc(c.author?.name||'User')}</b> ${esc(c.text)}</p>${isMine?`<button class="comment-more" data-comment-menu="${post._id}:${c._id}" aria-label="Comment options">•••</button><div class="comment-menu" id="comment-menu-${post._id}-${c._id}" hidden>${editable?`<button data-edit-comment="${post._id}:${c._id}">Edit</button>`:''}<button data-delete-comment="${post._id}:${c._id}">Delete</button></div>`:''}</div><button class="${liked?'liked':''}" data-comment-like="${post._id}:${c._id}">♥ ${commentLikes.length}</button><button data-reply-to="${post._id}:${c._id}">Reply</button></div>`};return `<article class="post"><button class="avatar avatar-gold ${hasStory?'has-story':''}" data-avatar="${user}" ${avatar}>${post.author?.profileImage?'':initials(post.author?.name)}</button><div class="post-content"><div class="post-meta"><strong class="profile-name" data-profile="${user}">${esc(post.author?.name||'Lion Link User')}</strong><span>@${esc(user)} · ${when(post.createdAt)}</span>${mine?`<button class="action" data-menu="${post._id}">•••</button>`:` <button class="follow-small" data-follow="${user}">Follow</button>`}</div>${post.text?`<p class="post-text">${esc(post.text)}</p>`:''}${media.length?`<div class="post-media gallery gallery-${Math.min(media.length,4)}">${tiles}</div>`:''}<div class="post-actions"><button class="action" data-comment-toggle="${post._id}">💬 ${comments.length}</button><button class="action ${likes.some(id=>(id._id||id).toString()===me?.id)?'liked':''}" data-like="${post._id}">♥ ${likes.length}</button><button class="action" data-share="${post._id}">↗ Share</button></div><div class="post-menu" id="menu-${post._id}" hidden><button data-edit-post="${post._id}">Edit</button><button data-delete-post="${post._id}">Delete</button></div><div class="comment-thread" id="comments-${post._id}" hidden>${comments.map(commentMarkup).join('')}<form data-comment-form="${post._id}"><input maxlength="280" required placeholder="Write a reply…"><button>Reply</button></form></div></div></article>`;}
+function postMarkup(post){const mine=post.author?._id===me?.id||post.author?.id===me?.id;const user=post.author?.username||'';const hasStory=stories.some(s=>s.author?.username===user);const likes=Array.isArray(post.likes)?post.likes:[];const comments=Array.isArray(post.comments)?post.comments:[];const media=post.media||[];const avatar=post.author?.profileImage?`style="background-image:url('${post.author.profileImage}');background-size:cover"`:'';const tiles=media.slice(0,4).map((m,i)=>`<button class="gallery-item" type="button" data-open-media="${post._id}:${i}" aria-label="Open post media ${i+1}">${m.type==='video'?`<video muted preload="metadata" src="${m.url}"></video>`:`<img src="${m.url}" alt="Post media ${i+1}">`}${i===3&&media.length>4?`<span class="media-more">+${media.length-4}</span>`:''}</button>`).join('');const commentMarkup=c=>{const commentLikes=Array.isArray(c.likes)?c.likes:[];const liked=commentLikes.some(id=>(id._id||id).toString()===me?.id);const isMine=(c.author?._id||c.author?.id||c.author)?.toString()===me?.id?.toString();const editable=isMine&&c.createdAt&&Date.now()-new Date(c.createdAt).getTime()<=15*60*1000;return `<div class="comment"><div class="comment-line"><p><b>${esc(c.author?.name||'User')}</b> ${esc(c.text)}</p>${isMine?`<button class="comment-more" data-comment-menu="${post._id}:${c._id}" aria-label="Comment options">•••</button><div class="comment-menu" id="comment-menu-${post._id}-${c._id}" hidden>${editable?`<button data-edit-comment="${post._id}:${c._id}">Edit</button>`:''}<button data-delete-comment="${post._id}:${c._id}">Delete</button></div>`:''}</div><button class="${liked?'liked':''}" data-comment-like="${post._id}:${c._id}">♥ ${commentLikes.length}</button><button data-reply-to="${post._id}:${c._id}">Reply</button></div>`};return `<article class="post" id="post-${post._id}"><button class="avatar avatar-gold ${hasStory?'has-story':''}" data-avatar="${user}" ${avatar}>${post.author?.profileImage?'':initials(post.author?.name)}</button><div class="post-content"><div class="post-meta"><strong class="profile-name" data-profile="${user}">${esc(post.author?.name||'Lion Link User')}</strong><span>@${esc(user)} · ${when(post.createdAt)}</span>${mine?`<button class="action" data-menu="${post._id}">•••</button>`:` <button class="follow-small" data-follow="${user}">Follow</button>`}</div>${post.text?`<p class="post-text">${esc(post.text)}</p>`:''}${media.length?`<div class="post-media gallery gallery-${Math.min(media.length,4)}">${tiles}</div>`:''}<div class="post-actions"><button class="action" data-report-post="${mine?'':post._id}" ${mine?'hidden':''}>⚑ Report</button><button class="action" data-comment-toggle="${post._id}">💬 ${comments.length}</button><button class="action ${likes.some(id=>(id._id||id).toString()===me?.id)?'liked':''}" data-like="${post._id}">♥ ${likes.length}</button><button class="action" data-share="${post._id}">↗ Share</button></div><div class="post-menu" id="menu-${post._id}" hidden><button data-edit-post="${post._id}">Edit</button><button data-delete-post="${post._id}">Delete</button></div><div class="comment-thread" id="comments-${post._id}" hidden>${comments.map(commentMarkup).join('')}<form data-comment-form="${post._id}"><input maxlength="280" required placeholder="Write a reply…"><button>Reply</button></form></div></div></article>`;}
 function renderPosts(){const all=posts.map(postMarkup).join('')||'<p class="empty-profile">No posts yet.</p>';$('#post-feed').innerHTML=all;const username=(viewedProfile||me)?.username;$('#profile-posts').innerHTML=posts.filter(p=>p.author?.username===username).map(postMarkup).join('')||'<p class="empty-profile">No posts yet.</p>';}
 async function loadPosts(){posts=(await api('/posts')).posts;renderPosts();}
 function renderProfile(user){if(!user)return;const own=user.username===me?.username;viewedProfile=own?null:user;$('#profile-name').textContent=user.name;$('#profile-handle').textContent='@'+user.username;const avatar=$('.profile-avatar');avatar.textContent=user.profileImage?'':initials(user.name);avatar.style.backgroundImage=user.profileImage?`url(${user.profileImage})`:'';avatar.style.backgroundSize='cover';avatar.dataset.profileAvatar=user.username;avatar.classList.toggle('has-story',stories.some(s=>s.author?.username===user.username));$('#profile-cover').style.backgroundImage=user.coverImage?`url(${user.coverImage})`:'';$('.profile-bio').textContent=user.bio||'UNN student · Sharing campus moments and meeting new people.';document.querySelectorAll('.profile-stats b')[0].textContent=user.following?.length??user.following??0;document.querySelectorAll('.profile-stats b')[1].textContent=user.followers?.length??user.followers??0;$('.edit-profile').hidden=!own;$('.message-profile').hidden=own;const follow=$('.follow-profile');follow.hidden=own;follow.textContent=user.isFollowing?'Following':'Follow';follow.classList.toggle('following',!!user.isFollowing);$('.profile-story-add').hidden=!own;renderPosts();}
@@ -28,7 +29,7 @@ $('#open-post').onclick=()=>{show('feed');$('#post-text').focus()};$('#refresh-f
 $('#announcement-form').onsubmit=async event=>{event.preventDefault();try{await api('/announcements',{method:'POST',body:JSON.stringify({title:$('#announcement-title').value,body:$('#announcement-body').value})});event.target.reset();await loadAnnouncements();toast('Announcement published.')}catch(error){toast(error.message)}};
 document.addEventListener('click',async event=>{const button=event.target.closest('[data-view]');if(button){if(button.dataset.view==='profile'){viewedProfile=null;renderProfile(me);}return show(button.dataset.view);}const d=event.target.dataset;if(d.like){const post=posts.find(p=>p._id===d.like),index=post.likes.findIndex(id=>(id._id||id).toString()===me.id);index<0?post.likes.push(me.id):post.likes.splice(index,1);renderPosts();try{await api(`/posts/${d.like}/like`,{method:'POST'})}catch(error){index<0?post.likes.pop():post.likes.push(me.id);renderPosts();toast(error.message)}}if(d.follow)try{const result=await api(`/users/${d.follow}/follow`,{method:'POST'});event.target.textContent=result.following?'Following':'Follow';event.target.classList.toggle('following',result.following);toast(result.following?'Following user':'Unfollowed user')}catch(error){toast(error.message)}if(d.commentToggle){const box=$('#comments-'+d.commentToggle);box.hidden=!box.hidden}if(d.deletePost&&confirm('Delete this post?'))try{await api('/posts/'+d.deletePost,{method:'DELETE'});loadPosts()}catch(error){toast(error.message)}if(d.editPost){const post=posts.find(p=>p._id===d.editPost),text=prompt('Edit post',post.text);if(text!==null)try{await api('/posts/'+d.editPost,{method:'PATCH',body:JSON.stringify({text})});loadPosts()}catch(error){toast(error.message)}}if(d.removeAnnouncement&&confirm('Remove this announcement?'))try{await api('/announcements/'+d.removeAnnouncement,{method:'DELETE'});loadAnnouncements()}catch(error){toast(error.message)}if(d.gallery){const post=posts.find(p=>p._id===d.gallery);$('#media-modal-content').innerHTML=post.media.map(m=>m.type==='video'?`<div class="modal-media"><video controls src="${m.url}"></video></div>`:`<div class="modal-media"><img src="${m.url}"></div>`).join('');$('#media-modal').hidden=false}if(d.chat)openChat(d.chat);if(d.user){if(d.user===me.username)return show('profile');try{const {conversation}=await api('/conversations',{method:'POST',body:JSON.stringify({username:d.user})});await loadChats();show('messages');openChat(conversation._id)}catch(error){toast(error.message)}}});
 document.addEventListener('submit',async event=>{const id=event.target.dataset.commentForm;if(!id)return;event.preventDefault();try{await api(`/posts/${id}/comments`,{method:'POST',body:JSON.stringify({text:event.target.elements[0].value,replyTo:event.target.dataset.replyTo||null})});await loadPosts();const box=$('#comments-'+id);if(box)box.hidden=false;}catch(error){toast(error.message)}});
-(async()=>{loginMode();if(!token)return;try{const result=await api('/auth/me');me=result.user;$('#login-overlay').classList.add('hidden');identity();await Promise.all([loadPosts(),loadAnnouncements(),loadChats()]);}catch{localStorage.removeItem('lionLinkToken');token=null;$('#login-overlay').classList.remove('hidden')}})();
+(async()=>{loginMode();if(!token)return;try{const result=await api('/auth/me');me=result.user;$('#login-overlay').classList.add('hidden');identity();await Promise.all([loadPosts(),loadAnnouncements(),loadChats()]);}catch(error){if(error.status===401||error.status===403){localStorage.removeItem('lionLinkToken');token=null;$('#login-overlay').classList.remove('hidden');}else{toast('Unable to reconnect. Your signed-in session is still saved.');}}})();
 
 async function loadStories(){stories=(await api('/stories')).stories;renderPosts();if(me){renderProfile(viewedProfile||me);const accountAvatar=$('.account .avatar');accountAvatar.classList.toggle('has-story',stories.some(s=>s.author?.username===me.username));}}
 $('#story-upload')?.addEventListener('change',async e=>{try{await api('/stories',{method:'POST',body:JSON.stringify({media:await fileData(e.target.files[0])})});loadStories();toast('Story posted for 24 hours.')}catch(error){toast(error.message)}});
@@ -39,9 +40,10 @@ document.addEventListener('click',async e=>{const target=e.target.closest('[data
 setTimeout(()=>{if(token)loadStories().catch(()=>{})},600);
 
 let deferredInstall;
-window.addEventListener('beforeinstallprompt', event => { event.preventDefault(); deferredInstall=event; });
+window.addEventListener('beforeinstallprompt', event => { event.preventDefault(); deferredInstall=event; if (!sessionStorage.getItem('lionLinkInstallPromptShown')) { sessionStorage.setItem('lionLinkInstallPromptShown', '1'); $('#download-lion-link-popup').hidden=false; } });
 if ('serviceWorker' in navigator) navigator.serviceWorker.register('./sw.js');
 $('#install-app').onclick=async()=>{if(!deferredInstall)return toast('Use your browser menu and choose “Install app” or “Add to Home Screen”.');deferredInstall.prompt();await deferredInstall.userChoice;deferredInstall=null;};
+$('#download-lion-link').onclick=async()=>{ $('#download-lion-link-popup').hidden=true; $('#install-app').click(); };
 $('#account-profile').onclick=()=>{renderProfile(me);show('profile');};
 $('#logout').onclick=()=>{if(!confirm('Log out of Lion Link? You will need to sign in again to post, message, or manage your profile.'))return;localStorage.removeItem('lionLinkToken');token=null;me=null;$('#login-overlay').classList.remove('hidden');toast('You have been logged out.');};
 $('#share-app').onclick=async()=>{const link=location.href;try{if(navigator.share)await navigator.share({title:'Lion Link',text:'Join Lion Link — your campus, connected.',url:link});else{await navigator.clipboard.writeText(link);toast('Lion Link link copied — send it to your friends!')}}catch{}};
@@ -256,6 +258,30 @@ openChat = function(id) {
   $('#messages-view').classList.add('chat-open');
   const header = $('#active-chat .chat-header');
   if (header && !header.querySelector('[data-close-chat]')) header.insertAdjacentHTML('afterbegin', '<button class="icon-button" data-close-chat aria-label="Back to conversations">‹</button>');
+  const mediaInput = $('#chat-media-input');
+  if (mediaInput) mediaInput.accept = 'image/*,video/*,audio/*';
+  activeChat?.messages.forEach((message, index) => {
+    if (message.media?.type !== 'audio') return;
+    const image = $('#active-chat').querySelectorAll('.message-media img')[index];
+    if (image) image.outerHTML = `<audio controls src="${message.media.url}"></audio>`;
+  });
+  const form = $('#chat-form');
+  if (form) {
+    form.insertAdjacentHTML('beforeend', '<button class="chat-send" type="button" id="record-voice" aria-label="Record voice note">🎙</button>');
+    let media = null, recorder, chunks = [];
+    mediaInput.onchange = async event => { const file = event.target.files[0]; if (!file) return; if (file.size > 5 * 1024 * 1024) return toast('Attachments must be 5 MB or smaller.'); media = await fileData(file); toast(file.type.startsWith('audio/') ? 'Voice note ready to send.' : 'Attachment ready to send.'); };
+    $('#record-voice').onclick = async event => {
+      if (!navigator.mediaDevices?.getUserMedia || !window.MediaRecorder) return toast('Voice recording is not available in this browser.');
+      if (recorder?.state === 'recording') { recorder.stop(); event.currentTarget.textContent = '🎙'; return; }
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: true }); chunks = []; recorder = new MediaRecorder(stream);
+        recorder.ondataavailable = part => chunks.push(part.data);
+        recorder.onstop = () => { stream.getTracks().forEach(track => track.stop()); const file = new File([new Blob(chunks, { type: recorder.mimeType || 'audio/webm' })], 'voice-note.webm', { type: recorder.mimeType || 'audio/webm' }); fileData(file).then(value => { media = { ...value, type: 'audio' }; toast('Voice note ready to send.'); }); };
+        recorder.start(); event.currentTarget.textContent = '■'; toast('Recording voice note… tap again to finish.');
+      } catch { toast('Microphone permission is needed to record a voice note.'); }
+    };
+    form.onsubmit = async event => { event.preventDefault(); if (sendingMessages.has(id)) return; const text = form.querySelector('input').value.trim(); if (!text && !media) return; sendingMessages.add(id); const send = form.querySelector('[type="submit"]'); send.disabled = true; try { await api(`/conversations/${id}/messages`, { method: 'POST', body: JSON.stringify({ text, media }) }); media = null; await loadChats(); openChat(id); } catch (error) { toast(error.message); } finally { sendingMessages.delete(id); send.disabled = false; } };
+  }
 };
 document.addEventListener('click', event => { if (event.target.closest('[data-close-chat]')) { $('#messages-view').classList.remove('chat-open'); activeChat = null; } });
 
@@ -267,11 +293,7 @@ renderReel = function() {
   selected?.scrollIntoView({ block: 'nearest' });
 };
 
-const postMarkupWithReports = postMarkup;
-postMarkup = function(post) {
-  const reportButton = post.author?._id === me?.id || post.author?.id === me?.id ? '' : `<button class="action report-post" data-report-post="${post._id}">⚑ Report</button>`;
-  return postMarkupWithReports(post).replace('</article>', `${reportButton}</article>`);
-};
+// Reporting is rendered in postMarkup's action row with the other post controls.
 document.addEventListener('click', async event => {
   const id = event.target.dataset.reportPost;
   if (!id) return;
@@ -312,3 +334,117 @@ $('#edit-profile-form').onsubmit = async event => {
     identity(); $('#edit-modal').hidden = true; toast('Profile updated.');
   } catch (error) { toast(error.message); }
 };
+
+// Keep personal display settings across launches and make all submissions tap-safe.
+const savedTheme = localStorage.getItem('lionLinkTheme');
+if (savedTheme === 'dark') document.body.classList.add('dark');
+function toggleTheme() {
+  document.body.classList.toggle('dark');
+  localStorage.setItem('lionLinkTheme', document.body.classList.contains('dark') ? 'dark' : 'light');
+}
+$('#theme-toggle').onclick = toggleTheme;
+$('#mobile-theme').onclick = toggleTheme;
+document.addEventListener('click', event => { if (event.target.id === 'drawer-theme') toggleTheme(); });
+
+let quickPosting = false, replying = new Set(), sendingMessages = new Set();
+const followStates = new Map();
+const renderPostsWithFollowState = renderPosts;
+renderPosts = function() {
+  renderPostsWithFollowState();
+  document.querySelectorAll('[data-follow]').forEach(button => {
+    const following = followStates.get(button.dataset.follow);
+    if (following === undefined) return;
+    button.textContent = following ? 'Following' : 'Follow'; button.classList.toggle('following', following);
+  });
+};
+const loadingOverlay = document.createElement('div');
+loadingOverlay.className = 'app-loading'; loadingOverlay.setAttribute('aria-hidden', 'true'); loadingOverlay.innerHTML = '<span></span>';
+document.body.append(loadingOverlay);
+let pendingRequests = 0;
+const apiWithoutLoading = api;
+api = async function(path, options) {
+  pendingRequests += 1; loadingOverlay.classList.add('show');
+  try { return await apiWithoutLoading(path, options); }
+  finally { pendingRequests -= 1; if (!pendingRequests) loadingOverlay.classList.remove('show'); }
+};
+$('#quick-post-form').onsubmit = async event => {
+  event.preventDefault();
+  if (quickPosting) return;
+  const text = $('#quick-post-text').value.trim();
+  if (!text && !quickMedia.length) return;
+  quickPosting = true;
+  const submit = event.target.querySelector('[type="submit"], .small-post'); submit.disabled = true;
+  try {
+    await api('/posts', { method: 'POST', body: JSON.stringify({ text, media: quickMedia }) });
+    event.target.reset(); quickMedia = []; mediaPreview([], '#quick-post-preview');
+    $('#quick-post-modal').hidden = true; await loadPosts(); toast('Your post is live!');
+  } catch (error) { toast(error.message); }
+  finally { quickPosting = false; submit.disabled = false; }
+};
+document.addEventListener('submit', async event => {
+  const postId = event.target.dataset.commentForm;
+  if (!postId) return;
+  event.preventDefault();
+  event.stopImmediatePropagation();
+  if (replying.has(postId)) return;
+  const text = event.target.elements[0].value.trim();
+  if (!text) return;
+  replying.add(postId);
+  const submit = event.target.querySelector('button'); submit.disabled = true;
+  try {
+    await api(`/posts/${postId}/comments`, { method: 'POST', body: JSON.stringify({ text, replyTo: event.target.dataset.replyTo || null }) });
+    event.target.reset(); delete event.target.dataset.replyTo; await loadPosts();
+    const box = $('#comments-' + postId); if (box) box.hidden = false;
+  } catch (error) { toast(error.message); }
+  finally { replying.delete(postId); submit.disabled = false; }
+}, true);
+
+loadNotifications = async function() {
+  if (!token) return;
+  try {
+    const { notifications, unread, unreadMessages } = await api('/notifications');
+    const count = $('#notification-count'); count.textContent = unread; count.hidden = !unread;
+    const messageCount = document.querySelector('[data-view="messages"] i'); if (messageCount) { messageCount.textContent = unreadMessages || ''; messageCount.hidden = !unreadMessages; }
+    $('#notification-list').innerHTML = notifications.map(item => `<button type="button" class="notification ${item.read ? '' : 'unread'}" data-notification-type="${item.type}" data-notification-post="${item.post?._id || item.post || ''}" data-notification-conversation="${item.conversation?._id || item.conversation || ''}"><div class="avatar avatar-gold">${initials(item.actor?.name)}</div><p><b>${esc(item.actor?.name || 'Someone')}</b> ${item.type === 'like' ? 'liked your post' : item.type === 'comment' ? 'commented on your post' : item.type === 'follow' ? 'started following you' : 'sent you a message'}<small>${when(item.createdAt)}</small></p></button>`).join('') || '<p class="empty-profile">You have no notifications yet.</p>';
+    const mobile = $('.bottom-nav [data-view="notifications"]'); if (mobile) mobile.innerHTML = '<span>♢</span>Notifications';
+  } catch (error) { console.warn(error); }
+};
+document.addEventListener('click', async event => {
+  const item = event.target.closest('[data-notification-type]'); if (!item) return;
+  const postId = item.dataset.notificationPost, conversationId = item.dataset.notificationConversation;
+  if (postId) { show('feed'); if (!posts.some(post => post._id === postId)) await loadPosts(); requestAnimationFrame(() => $('#post-' + postId)?.scrollIntoView({ behavior: 'smooth', block: 'center' })); }
+  else if (item.dataset.notificationType === 'message') { await loadChats(); show('messages'); const target = conversationId || conversations[0]?._id; if (target) openChat(target); }
+});
+
+document.addEventListener('click', async event => {
+  const button = event.target.closest('[data-follow]');
+  if (!button || button.dataset.followBusy) return;
+  event.stopImmediatePropagation();
+  button.dataset.followBusy = 'true'; button.disabled = true;
+  try {
+    const result = await api(`/users/${encodeURIComponent(button.dataset.follow)}/follow`, { method: 'POST' });
+    followStates.set(button.dataset.follow, result.following);
+    button.textContent = result.following ? 'Following' : 'Follow'; button.classList.toggle('following', result.following);
+    if (viewedProfile?.username === button.dataset.follow) { viewedProfile.isFollowing = result.following; viewedProfile.followers = result.followers; renderProfile(viewedProfile); }
+    if (me) me.following = result.followingCount ?? me.following;
+    loadPeople(); toast(result.following ? 'Following user' : 'Unfollowed user');
+  } catch (error) { toast(error.message); }
+  finally { delete button.dataset.followBusy; button.disabled = false; }
+}, true);
+
+function showPostMedia(postId, index) {
+  const post = posts.find(item => item._id === postId), media = post?.media || [];
+  const item = media[index]; if (!item) return;
+  const visual = item.type === 'video' ? `<video controls autoplay src="${item.url}"></video>` : `<img src="${item.url}" alt="Post media ${index + 1}">`;
+  $('#media-modal-content').innerHTML = `<div class="modal-media">${visual}</div><div class="reels-actions">${media.length > 1 ? `<button type="button" data-media-prev="${postId}:${index}">‹ Previous</button><small>${index + 1} of ${media.length}</small><button type="button" data-media-next="${postId}:${index}">Next ›</button>` : ''}<a class="small-post" href="${item.url}" download="lion-link-media-${index + 1}">Save media</a></div>`;
+  $('#media-modal').hidden = false;
+}
+document.addEventListener('click', event => {
+  const open = event.target.closest('[data-open-media]');
+  if (open) { const [postId, index] = open.dataset.openMedia.split(':'); showPostMedia(postId, Number(index)); return; }
+  const step = event.target.closest('[data-media-prev],[data-media-next]');
+  if (!step) return;
+  const [postId, indexText] = (step.dataset.mediaPrev || step.dataset.mediaNext).split(':');
+  const media = posts.find(item => item._id === postId)?.media || [], index = Number(indexText);
+  showPostMedia(postId, step.dataset.mediaNext ? (index + 1) % media.length : (index - 1 + media.length) % media.length);
+});

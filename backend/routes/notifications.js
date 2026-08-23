@@ -6,6 +6,7 @@ router.get("/", auth, async (req, res) => {
   const notifications = await Notification.find({ recipient: req.user.userId })
     .populate("actor", "name username profileImage")
     .populate("post", "text")
+    .populate("conversation")
     .sort({ createdAt: -1 })
     .limit(100);
   res.json({ notifications, unread: notifications.filter(item => !item.read).length, unreadMessages: notifications.filter(item => !item.read && item.type === "message").length });
