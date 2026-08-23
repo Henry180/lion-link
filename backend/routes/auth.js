@@ -101,11 +101,7 @@ router.patch("/me", auth, async (req, res) => {
 });
 
 router.post("/become-admin", auth, async (req, res) => {
-  if (!process.env.ADMIN_INVITE_CODE) return res.status(503).json({ message: "Admin invitations have not been configured" });
-  if (req.body.code !== process.env.ADMIN_INVITE_CODE) return res.status(403).json({ message: "That admin code is not valid" });
-  const user = await User.findByIdAndUpdate(req.user.userId, { role: "admin" }, { new: true });
-  const token = jwt.sign({ userId:user._id, role:user.role }, process.env.JWT_SECRET, { expiresIn:"7d" });
-  res.json({ token, user: { id:user._id, name:user.name, email:user.email, username:user.username, role:user.role, bio:user.bio, profileImage:user.profileImage, coverImage:user.coverImage } });
+  return res.status(403).json({ message: "Admin roles are assigned only by the Lion Link administrator." });
 });
 
 

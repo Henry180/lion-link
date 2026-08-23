@@ -1,4 +1,6 @@
 const router=require("express").Router(); const Story=require("../models/Story"); const auth=require("../middleware/auth");
 router.get("/",async(_,res)=>res.json({stories:await Story.find({expiresAt:{$gt:new Date()}}).populate("author","name username profileImage").sort({createdAt:-1})}));
-router.post("/",auth,async(req,res)=>{if(!req.body.media?.url)return res.status(400).json({message:'Story media is required'});const story=await Story.create({author:req.user.userId,media:req.body.media});res.status(201).json({story})});
+router.post("/",auth,async(req,res)=>{if(!req.body.media?.url)return res.status(400).json({message:'Story media is required'});const story=await Story.create({author:req.user.userId,media:req.body.media,caption:String(req.body.caption||'').trim()});res.status(201).json({story})});
+router.patch("/:id",auth,async(req,res)=>{const story=await Story.findById(req.params.id);if(!story)return res.status(404).json({message:'Story not found'});if(story.author.toString()!==req.user.userId)return res.status(403).json({message:'You can only edit your own story'});story.caption=String(req.body.caption||'').trim();await story.save();res.json({story})});
+router.delete("/:id",auth,async(req,res)=>{const story=await Story.findById(req.params.id);if(!story)return res.status(404).json({message:'Story not found'});if(story.author.toString()!==req.user.userId)return res.status(403).json({message:'You can only delete your own story'});await story.deleteOne();res.status(204).end()});
 module.exports=router;

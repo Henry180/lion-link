@@ -9,6 +9,8 @@ const announcementRoutes = require("./routes/announcements");
 const conversationRoutes = require("./routes/conversations");
 const storyRoutes = require("./routes/stories");
 const userRoutes = require("./routes/users");
+const notificationRoutes = require("./routes/notifications");
+const eventRoutes = require("./routes/events");
 
 const app = express();
 let databaseReady = false;
@@ -68,6 +70,8 @@ app.use("/api/announcements", announcementRoutes);
 app.use("/api/conversations", conversationRoutes);
 app.use("/api/stories", storyRoutes);
 app.use("/api/users", userRoutes);
+app.use("/api/notifications", notificationRoutes);
+app.use("/api/events", eventRoutes);
 
 
 // =====================================================

@@ -83,3 +83,213 @@ function closeDrawers(){document.querySelectorAll('.mobile-drawer').forEach(x=>x
 function openDrawer(side){$('#mobile-'+side+'-drawer').hidden=false;$('#drawer-scrim').hidden=false;}
 $('#drawer-scrim').onclick=closeDrawers;let touchStart;document.addEventListener('touchstart',e=>{touchStart=e.changedTouches[0];},{passive:true});document.addEventListener('touchend',e=>{if(!touchStart||innerWidth>800)return;const end=e.changedTouches[0],dx=end.clientX-touchStart.clientX,dy=end.clientY-touchStart.clientY;if(Math.abs(dx)>70&&Math.abs(dx)>Math.abs(dy))openDrawer(dx>0?'left':'right');},{passive:true});
 const originalIdentity=identity;identity=function(){originalIdentity();if(me){const avatar=$('.account .avatar');avatar.style.backgroundImage=me.profileImage?`url(${me.profileImage})`:'';avatar.style.backgroundSize='cover';avatar.classList.toggle('has-story',stories.some(s=>s.author?.username===me.username));loadPeople();}};
+
+// Reliability and mobile usability improvements.
+const baseRenderProfile = renderProfile;
+renderProfile = function(user) {
+  baseRenderProfile(user);
+  const joined = user?.createdAt ? new Date(user.createdAt).toLocaleDateString(undefined, { month: 'long', year: 'numeric' }) : null;
+  if (joined) $('.profile-meta').innerHTML = `⌖ University of Nigeria, Nsukka &nbsp; · &nbsp; ◷ Joined ${esc(joined)}`;
+};
+
+const basePostMarkup = postMarkup;
+postMarkup = function(post) {
+  const markup = basePostMarkup(post);
+  return markup.replace('<div class="post-menu"', `<span class="impressions" data-impressions="${post._id}">◉ ${Number(post.impressions || 0).toLocaleString()} impressions</span><div class="post-menu"`);
+};
+
+const countedImpressions = new Set();
+const baseRenderPostsWithImpressions = renderPosts;
+renderPosts = function() {
+  baseRenderPostsWithImpressions();
+  posts.forEach(post => {
+    if (countedImpressions.has(post._id)) return;
+    countedImpressions.add(post._id);
+    api(`/posts/${post._id}/impression`, { method: 'POST' }).then(({ impressions }) => {
+      post.impressions = impressions;
+      document.querySelectorAll(`[data-impressions="${post._id}"]`).forEach(node => node.textContent = `◉ ${Number(impressions).toLocaleString()} impressions`);
+    }).catch(() => countedImpressions.delete(post._id));
+  });
+};
+
+$('#open-home-search')?.addEventListener('click', () => {
+  $('#user-search-modal').hidden = false;
+  $('#user-search-input').focus();
+});
+$('.profile-links a[href^="mailto:"]')?.setAttribute('href', 'mailto:lionlinkadmin@gmail.com');
+
+let feedPosting = false;
+$('#submit-post').onclick = async () => {
+  if (feedPosting) return;
+  const text = $('#post-text').value.trim();
+  if (!text && !selectedMedia.length) return;
+  feedPosting = true;
+  $('#submit-post').disabled = true;
+  try {
+    const { post } = await api('/posts', { method: 'POST', body: JSON.stringify({ text, media: selectedMedia }) });
+    posts.unshift(post);
+    renderPosts();
+    $('#post-text').value = '';
+    selectedMedia = [];
+    $('#media-input').value = '';
+    $('#media-preview').hidden = true;
+    toast('Your post is live!');
+  } catch (error) { toast(error.message); }
+  finally { feedPosting = false; $('#submit-post').disabled = false; }
+};
+
+async function postStoryWithCaption(file) {
+  if (!file) return;
+  const caption = prompt('Add a caption to your story (optional):', '');
+  if (caption === null) return;
+  try {
+    await api('/stories', { method: 'POST', body: JSON.stringify({ media: await fileData(file), caption }) });
+    await loadStories();
+    toast('Story posted for 24 hours.');
+  } catch (error) { toast(error.message); }
+}
+['#story-upload', '#profile-story-upload'].forEach(selector => $(selector)?.addEventListener('change', event => {
+  event.stopImmediatePropagation();
+  postStoryWithCaption(event.target.files[0]);
+}, true));
+
+openStory = function(story) {
+  const mine = (story.author?._id || story.author?.id) === me?.id;
+  const controls = mine ? `<div class="story-controls"><button data-edit-story="${story._id}">Edit caption</button><button data-delete-story="${story._id}">Delete story</button></div>` : '';
+  $('#media-modal-content').innerHTML = `${story.media.type === 'video' ? `<div class="modal-media"><video controls autoplay src="${story.media.url}"></video></div>` : `<div class="modal-media"><img src="${story.media.url}" alt="Story"></div>`}<p class="story-caption">${esc(story.caption || '')}</p>${controls}`;
+  $('#media-modal').hidden = false;
+};
+document.addEventListener('click', async event => {
+  const d = event.target.dataset;
+  if (d.editStory) {
+    const story = stories.find(item => item._id === d.editStory);
+    const caption = prompt('Edit story caption', story?.caption || '');
+    if (caption !== null) try { await api(`/stories/${d.editStory}`, { method: 'PATCH', body: JSON.stringify({ caption }) }); await loadStories(); openStory({ ...story, caption }); } catch (error) { toast(error.message); }
+  }
+  if (d.deleteStory && confirm('Delete this story?')) try { await api(`/stories/${d.deleteStory}`, { method: 'DELETE' }); $('#media-modal').hidden = true; await loadStories(); toast('Story deleted.'); } catch (error) { toast(error.message); }
+});
+
+document.addEventListener('touchend', event => {
+  if (innerWidth > 800 || $('#mobile-left-drawer').hidden && $('#mobile-right-drawer').hidden) return;
+  const end = event.changedTouches[0];
+  if (touchStart && Math.abs(end.clientX - touchStart.clientX) > 70) {
+    closeDrawers();
+    event.stopImmediatePropagation();
+  }
+}, true);
+
+// In-app notifications for likes, comments, follows, and unread messages.
+const notificationsView = document.createElement('section');
+notificationsView.className = 'view';
+notificationsView.id = 'notifications-view';
+notificationsView.innerHTML = '<header class="page-header"><div><p class="eyebrow">STAY CONNECTED</p><h1>Notifications</h1></div><button class="icon-button" id="read-notifications" aria-label="Mark all notifications as read">✓</button></header><section id="notification-list" class="notification-list"></section>';
+$('.main-content').append(notificationsView);
+const notificationButton = document.createElement('button');
+notificationButton.className = 'nav-link'; notificationButton.dataset.view = 'notifications'; notificationButton.innerHTML = '<span>♢</span> Notifications <i id="notification-count" hidden>0</i>';
+document.querySelector('.main-nav').insertBefore(notificationButton, document.querySelector('.main-nav [data-view="profile"]'));
+const mobileNotificationButton = document.createElement('button');
+mobileNotificationButton.dataset.view = 'notifications'; mobileNotificationButton.innerHTML = '<span>♢</span>Alerts';
+$('.bottom-nav').insertBefore(mobileNotificationButton, $('.bottom-nav [data-view="profile"]'));
+async function loadNotifications() {
+  if (!token) return;
+  try {
+    const { notifications, unread, unreadMessages } = await api('/notifications');
+    const count = $('#notification-count'); count.textContent = unread; count.hidden = !unread;
+    const messageButton = document.querySelector('[data-view="messages"] i');
+    if (messageButton) { messageButton.textContent = unreadMessages || ''; messageButton.hidden = !unreadMessages; }
+    $('#notification-list').innerHTML = notifications.map(item => `<article class="notification ${item.read ? '' : 'unread'}"><div class="avatar avatar-gold">${initials(item.actor?.name)}</div><p><b>${esc(item.actor?.name || 'Someone')}</b> ${item.type === 'like' ? 'liked your post' : item.type === 'comment' ? 'commented on your post' : item.type === 'follow' ? 'started following you' : 'sent you a message'}<small>${when(item.createdAt)}</small></p></article>`).join('') || '<p class="empty-profile">You have no notifications yet.</p>';
+  } catch (error) { console.warn(error); }
+}
+$('#read-notifications').onclick = async () => { try { await api('/notifications/read', { method: 'POST' }); await loadNotifications(); } catch (error) { toast(error.message); } };
+const identityWithNotifications = identity;
+identity = function() { identityWithNotifications(); loadNotifications(); };
+
+// Events are public to view and restricted to verified admins to manage.
+let campusEvents = [];
+const eventsView = $('#events-view');
+eventsView.classList.remove('placeholder-view');
+eventsView.innerHTML = '<header class="page-header"><div><p class="eyebrow">WHAT’S HAPPENING</p><h1>Campus events</h1></div></header><form id="event-form" class="event-form" hidden><input name="title" required maxlength="100" placeholder="Event title"><input name="startsAt" required type="datetime-local"><input name="location" maxlength="120" placeholder="Location"><textarea name="description" maxlength="500" placeholder="Event details (optional)"></textarea><button class="small-post">Publish event</button></form><section id="event-list" class="event-list"></section>';
+function renderEvents() {
+  const admin = me?.role === 'admin';
+  $('#event-form').hidden = !admin;
+  $('#event-list').innerHTML = campusEvents.map(event => `<article class="event-card"><time><b>${new Date(event.startsAt).toLocaleString(undefined, { month: 'short' }).toUpperCase()}</b><strong>${new Date(event.startsAt).getDate()}</strong></time><div><h2>${esc(event.title)}</h2><p>${new Date(event.startsAt).toLocaleString()} · ${esc(event.location)}</p><p>${esc(event.description || '')}</p></div>${admin ? `<button class="action" data-delete-event="${event._id}">Delete</button>` : ''}</article>`).join('') || '<p class="empty-profile">No upcoming events yet.</p>';
+}
+async function loadEvents() { try { campusEvents = (await api('/events')).events; renderEvents(); } catch (error) { console.warn(error); } }
+$('#event-form').onsubmit = async event => { event.preventDefault(); const data = Object.fromEntries(new FormData(event.target)); try { await api('/events', { method: 'POST', body: JSON.stringify(data) }); event.target.reset(); await loadEvents(); toast('Event published.'); } catch (error) { toast(error.message); } };
+document.addEventListener('click', async event => { const id = event.target.dataset.deleteEvent; if (!id || !confirm('Delete this event?')) return; try { await api(`/events/${id}`, { method: 'DELETE' }); await loadEvents(); toast('Event deleted.'); } catch (error) { toast(error.message); } });
+const identityWithEvents = identity;
+identity = function() { identityWithEvents(); loadEvents(); $('#admin-code').hidden = true; setTimeout(() => toast(`Hello ${me?.name || 'Lion'} — welcome to Lion Link!`), 120); };
+setTimeout(loadEvents, 700);
+
+const followListModal = document.createElement('div');
+followListModal.className = 'edit-modal'; followListModal.id = 'follow-list-modal'; followListModal.hidden = true;
+followListModal.innerHTML = '<section class="edit-card"><button class="modal-close" type="button" data-close-modal="follow-list-modal" aria-label="Close follow list">×</button><h2 id="follow-list-title"></h2><div id="follow-list-results" class="people-results"></div></section>';
+document.body.append(followListModal);
+async function openFollowList(list) {
+  const user = viewedProfile || me;
+  if (!user) return;
+  try {
+    const result = await api(`/users/${encodeURIComponent(user.username)}/${list}`);
+    $('#follow-list-title').textContent = list === 'followers' ? 'Followers' : 'Following';
+    $('#follow-list-results').innerHTML = result.users.map(personMarkup).join('') || `<p class="empty-profile">No ${list} yet.</p>`;
+    followListModal.hidden = false;
+  } catch (error) { toast(error.message); }
+}
+const renderProfileWithLists = renderProfile;
+renderProfile = function(user) {
+  renderProfileWithLists(user);
+  const stats = document.querySelectorAll('.profile-stats span');
+  if (stats[0]) { stats[0].role = 'button'; stats[0].tabIndex = 0; stats[0].onclick = () => openFollowList('following'); }
+  if (stats[1]) { stats[1].role = 'button'; stats[1].tabIndex = 0; stats[1].onclick = () => openFollowList('followers'); }
+};
+
+// Mobile conversations now open instantly as a focused chat, with an in-app return button.
+const baseOpenChat = openChat;
+openChat = function(id) {
+  baseOpenChat(id);
+  $('#messages-view').classList.add('chat-open');
+  const header = $('#active-chat .chat-header');
+  if (header && !header.querySelector('[data-close-chat]')) header.insertAdjacentHTML('afterbegin', '<button class="icon-button" data-close-chat aria-label="Back to conversations">‹</button>');
+};
+document.addEventListener('click', event => { if (event.target.closest('[data-close-chat]')) { $('#messages-view').classList.remove('chat-open'); activeChat = null; } });
+
+// Reels use a vertical, touch-friendly stream instead of one video at a time.
+renderReel = function() {
+  if (!reelVideos.length) return;
+  $('#reels-content').innerHTML = reelVideos.map((reel, index) => `<article class="reel-slide" data-reel-index="${index}"><video controls playsinline preload="metadata" src="${reel.url}"></video><div><b>${esc(reel.post.author?.name || 'Lion Link user')}</b><p>${esc(reel.post.text || '')}</p></div></article>`).join('');
+  const selected = $('#reels-content [data-reel-index="' + reelIndex + '"]');
+  selected?.scrollIntoView({ block: 'nearest' });
+};
+
+const postMarkupWithReports = postMarkup;
+postMarkup = function(post) {
+  const reportButton = post.author?._id === me?.id || post.author?.id === me?.id ? '' : `<button class="action report-post" data-report-post="${post._id}">⚑ Report</button>`;
+  return postMarkupWithReports(post).replace('</article>', `${reportButton}</article>`);
+};
+document.addEventListener('click', async event => {
+  const id = event.target.dataset.reportPost;
+  if (!id) return;
+  const reason = prompt('Why are you reporting this post?');
+  if (reason === null) return;
+  try { await api(`/posts/${id}/report`, { method: 'POST', body: JSON.stringify({ reason }) }); toast('Report sent to the Lion Link admin.'); } catch (error) { toast(error.message); }
+});
+
+const reportReview = document.createElement('section');
+reportReview.className = 'admin-posts'; reportReview.id = 'report-review'; reportReview.hidden = true;
+reportReview.innerHTML = '<h2>Reported posts</h2><div id="report-list"></div>';
+$('#admin-view').append(reportReview);
+async function loadReports() {
+  if (me?.role !== 'admin') return;
+  try {
+    const { posts: reportedPosts } = await api('/posts/reports');
+    reportReview.hidden = false;
+    $('#report-list').innerHTML = reportedPosts.map(post => `<article class="admin-announcement"><div><b>${esc(post.author?.name || 'User')} · @${esc(post.author?.username || '')}</b><p>${esc(post.text || '[Media post]')}</p><small>${post.reports.length} report${post.reports.length === 1 ? '' : 's'}${post.reports[0]?.reason ? `: ${esc(post.reports[0].reason)}` : ''}</small></div><button data-remove-reported-post="${post._id}">Remove post</button></article>`).join('') || '<p class="empty-profile">No reported posts.</p>';
+  } catch (error) { console.warn(error); }
+}
+document.addEventListener('click', async event => {
+  const id = event.target.dataset.removeReportedPost;
+  if (!id || !confirm('Remove this reported post?')) return;
+  try { await api(`/posts/${id}`, { method: 'DELETE' }); await loadReports(); toast('Reported post removed.'); } catch (error) { toast(error.message); }
+});
+const identityWithReports = identity;
+identity = function() { identityWithReports(); loadReports(); };

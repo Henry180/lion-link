@@ -25,6 +25,8 @@ const postSchema = new mongoose.Schema(
     ],
 
     likes: [{ type: mongoose.Schema.Types.ObjectId, ref: "User" }],
+    impressions: { type: Number, default: 0, min: 0 },
+    reports: [{ reporter: { type: mongoose.Schema.Types.ObjectId, ref: "User" }, reason: { type: String, trim: true, maxlength: 280 }, createdAt: { type: Date, default: Date.now } }],
     comments: [{ author: { type: mongoose.Schema.Types.ObjectId, ref: "User", required: true }, text: { type: String, trim: true, maxlength: 280, required: true }, replyTo: { type: mongoose.Schema.Types.ObjectId, default: null }, likes: [{ type: mongoose.Schema.Types.ObjectId, ref: "User" }], createdAt: { type: Date, default: Date.now } }]
   },
   {
