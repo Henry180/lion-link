@@ -1,6 +1,8 @@
 // Same-site API in production. Cloudflare Pages forwards /api via its Pages Function.
-// API_URL is the host; api() adds the /api prefix exactly once.
-const API_URL = window.LION_LINK_API_URL || (location.protocol === 'file:' || location.hostname === 'localhost' || location.hostname === '127.0.0.1' ? 'http://localhost:5000' : '');
+// API_URL is always the API host; api() adds the /api prefix exactly once.
+// Accept either a bare host or a legacy host ending in /api from deployment settings.
+const configuredApiUrl = window.LION_LINK_API_URL || (location.protocol === 'file:' || location.hostname === 'localhost' || location.hostname === '127.0.0.1' ? 'http://localhost:5000' : '');
+const API_URL = configuredApiUrl.replace(/\/api\/?$/, '').replace(/\/$/, '');
 const $ = s => document.querySelector(s);
 let token = localStorage.getItem('lionLinkToken');
 let me = null, posts = [], announcements = [], conversations = [], activeChat = null, selectedMedia = [], stories=[], viewedProfile=null, quickMedia=[], announcementMedia=[];
