@@ -18,7 +18,7 @@
         <nav class="main-nav" aria-label="Main navigation">
           <button class="nav-link active" data-view="feed"><span>⌂</span> Home</button>
           <button class="nav-link" data-view="announcements"><span>◉</span> Announcements <i id="announcement-count" hidden>0</i></button>
-          <button class="nav-link" data-view="messages"><span>✉</span> Messages</button>
+          <button class="nav-link" data-view="messages"><span>✉</span> Messages <i id="message-count" hidden>0</i></button>
           <button class="nav-link" data-view="events"><span>◇</span> Events</button>
           <button class="nav-link" data-view="profile"><span>♙</span> Profile</button>
           <button class="nav-link" data-view="admin"><span>⚙</span> Lion Link Admin</button>
@@ -44,8 +44,8 @@
         </section>
 
         <section class="view messages-layout" id="messages-view">
-          <header class="page-header messages-title"><div><p class="eyebrow">KEEP IN TOUCH</p><h1>Messages</h1></div><button class="icon-button friend-search-button" id="open-user-search" aria-label="Search for a friend">⌕</button></header>
-          <div class="chat-shell"><aside class="conversation-list"><label class="search"><span>⌕</span><input placeholder="Search messages" /></label><div id="conversations"></div></aside><section class="chat-panel"><div class="chat-empty" id="chat-empty"><span>✉</span><h2>Your messages</h2><p>Select a conversation to start chatting.</p></div><div id="active-chat" hidden></div></section></div>
+          <header class="page-header messages-title"><div><p class="eyebrow">KEEP IN TOUCH</p><h1>Messages</h1></div><button class="small-post" id="open-user-search" type="button">New message</button></header>
+          <div class="chat-shell" id="dm-shell"><aside class="conversation-list"><label class="search"><span>⌕</span><input id="message-search" type="search" placeholder="Search messages or people" autocomplete="off" /></label><div id="message-search-results" hidden></div><div id="conversations"></div></aside><section class="chat-panel"><div class="chat-empty" id="chat-empty"><span>✉</span><h2>Your messages</h2><p>Select a conversation to start chatting.</p><button class="small-post" type="button" data-new-message>Write a message</button></div><div id="active-chat" hidden></div></section></div>
         </section>
 
         <section class="view placeholder-view" id="events-view"><span>◇</span><h1>Campus events</h1><p>Your upcoming events will appear here.</p></section>

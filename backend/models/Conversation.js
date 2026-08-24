@@ -1,2 +1,15 @@
 const mongoose = require("mongoose");
-module.exports = mongoose.model("Conversation", new mongoose.Schema({ members: [{ type: mongoose.Schema.Types.ObjectId, ref: "User" }], messages: [{ sender: { type: mongoose.Schema.Types.ObjectId, ref: "User" }, text: { type: String, maxlength: 300, default: "" }, media: { url: String, type: { type: String, enum: ["image", "video", "audio"] } }, createdAt: { type: Date, default: Date.now } }] }, { timestamps: true }));
+
+const messageSchema = new mongoose.Schema({
+  sender: { type: mongoose.Schema.Types.ObjectId, ref: "User", required: true },
+  text: { type: String, maxlength: 300, default: "" },
+  media: { url: String, type: { type: String, enum: ["image", "video", "audio"] } },
+  deliveredAt: { type: Date, default: Date.now },
+  readAt: { type: Date, default: null },
+  createdAt: { type: Date, default: Date.now }
+}, { _id: true });
+
+module.exports = mongoose.model("Conversation", new mongoose.Schema({
+  members: [{ type: mongoose.Schema.Types.ObjectId, ref: "User" }],
+  messages: [messageSchema]
+}, { timestamps: true }));
