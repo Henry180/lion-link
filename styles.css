@@ -2486,6 +2486,8 @@ body.dark .x-conversation,body.dark .x-chat { background:#000; } body.dark .x-co
 
 /* Final messaging interaction details. */
 .x-conversation.unread { background:color-mix(in srgb, var(--cream) 78%, var(--paper)); }
+.x-conversation { grid-template-columns:40px minmax(0,1fr) auto; gap:9px; min-height:64px; padding:10px 12px; align-items:center; }
+.x-conversation .avatar { width:40px; height:40px; }
 .x-conversation.unread b { font-weight:800; }
 .x-conversation-meta { display:grid; justify-items:end; gap:7px; min-width:28px; }
 .x-conversation-meta i { display:grid; place-items:center; min-width:18px; height:18px; padding:0 4px; border-radius:999px; background:var(--green); color:#fff; font-size:10px; font-style:normal; font-weight:700; }
