@@ -11,6 +11,7 @@ const storyRoutes = require("./routes/stories");
 const userRoutes = require("./routes/users");
 const notificationRoutes = require("./routes/notifications");
 const eventRoutes = require("./routes/events");
+const adminRoutes = require("./routes/admin").router;
 
 const app = express();
 let databaseReady = false;
@@ -72,6 +73,7 @@ app.use("/api/stories", storyRoutes);
 app.use("/api/users", userRoutes);
 app.use("/api/notifications", notificationRoutes);
 app.use("/api/events", eventRoutes);
+app.use("/api/admin", adminRoutes);
 
 
 // =====================================================

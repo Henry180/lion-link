@@ -3,6 +3,8 @@ const bcrypt = require("bcryptjs");
 const jwt = require("jsonwebtoken");
 const User = require("../models/User");
 const auth = require("../middleware/auth");
+const AdminInvite = require("../models/AdminInvite");
+const crypto = require("crypto");
 
 const router = express.Router();
 
@@ -85,9 +87,9 @@ router.post("/register", register);
 router.post("/signup", register);
 
 router.get("/me", auth, async (req, res) => {
-  const user = await User.findById(req.user.userId).select("name email username role bio profileImage coverImage location followers following");
+  const user = await User.findById(req.user.userId).select("name email username role bio profileImage coverImage location followers following createdAt").populate("following", "username");
   if (!user) return res.status(404).json({ message: "User not found" });
-  res.json({ user: { id: user._id, name: user.name, email: user.email, username: user.username, role: user.role, bio: user.bio, profileImage: user.profileImage, coverImage: user.coverImage, location: user.location, followers: user.followers.length, following: user.following.length } });
+  res.json({ user: { id: user._id, name: user.name, email: user.email, username: user.username, role: user.role, bio: user.bio, profileImage: user.profileImage, coverImage: user.coverImage, location: user.location, followers: user.followers.length, following: user.following.length, followingUsernames: user.following.map(item => item.username), createdAt: user.createdAt } });
 });
 
 router.patch("/me", auth, async (req, res) => {
@@ -102,7 +104,15 @@ router.patch("/me", auth, async (req, res) => {
 });
 
 router.post("/become-admin", auth, async (req, res) => {
-  return res.status(403).json({ message: "Admin roles are assigned only by the Lion Link administrator." });
+  const code = String(req.body.code || "").trim().toUpperCase();
+  const codeHash = crypto.createHash("sha256").update(code).digest("hex");
+  const invite = await AdminInvite.findOne({ codeHash, usedBy: null, expiresAt: { $gt: new Date() } });
+  if (!invite) return res.status(400).json({ message: "That admin invite code is invalid or has expired." });
+  const user = await User.findById(req.user.userId);
+  user.role = "admin"; await user.save();
+  invite.usedBy = user._id; invite.usedAt = new Date(); await invite.save();
+  const token = jwt.sign({ userId: user._id, role: user.role }, process.env.JWT_SECRET, { expiresIn: "7d" });
+  res.json({ token, user: { id: user._id, name: user.name, email: user.email, username: user.username, role: user.role, bio: user.bio, profileImage: user.profileImage, coverImage: user.coverImage, location: user.location, createdAt: user.createdAt } });
 });
 
 

@@ -3,26 +3,35 @@ const User = require("../models/User");
 const auth = require("../middleware/auth");
 const Notification = require("../models/Notification");
 
-const publicUser = user => ({ id: user._id, name: user.name, username: user.username, bio: user.bio, profileImage: user.profileImage, coverImage: user.coverImage, location: user.location, followers: user.followers?.length || 0, following: user.following?.length || 0, createdAt: user.createdAt });
+const publicUser = (user, viewerFollowing = null) => ({ id: user._id, name: user.name, username: user.username, bio: user.bio, profileImage: user.profileImage, coverImage: user.coverImage, location: user.location, followers: user.followers?.length || 0, following: user.following?.length || 0, createdAt: user.createdAt, ...(viewerFollowing ? { isFollowing: viewerFollowing.has(String(user._id)) } : {}) });
 
 router.get("/suggestions/all", auth, async (req, res) => {
-  const users = await User.find({ _id: { $ne: req.user.userId } }).select("name username bio profileImage followers following createdAt").sort({ createdAt: -1 });
-  res.json({ users: users.map(publicUser) });
+  const [users, viewer] = await Promise.all([
+    User.find({ _id: { $ne: req.user.userId } }).select("name username bio profileImage followers following createdAt").sort({ createdAt: -1 }),
+    User.findById(req.user.userId).select("following")
+  ]);
+  const viewerFollowing = new Set((viewer?.following || []).map(String));
+  res.json({ users: users.map(user => publicUser(user, viewerFollowing)) });
 });
 
 router.get("/search/:query", auth, async (req, res) => {
   const query = String(req.params.query || "").trim();
   if (!query) return res.json({ users: [] });
-  const users = await User.find({ _id: { $ne: req.user.userId }, $or: [{ name: new RegExp(query, "i") }, { username: new RegExp(query.replace(/^@/, ""), "i") }] }).select("name username bio profileImage followers following createdAt").limit(20);
-  res.json({ users: users.map(publicUser) });
+  const [users, viewer] = await Promise.all([
+    User.find({ _id: { $ne: req.user.userId }, $or: [{ name: new RegExp(query, "i") }, { username: new RegExp(query.replace(/^@/, ""), "i") }] }).select("name username bio profileImage followers following createdAt").limit(20),
+    User.findById(req.user.userId).select("following")
+  ]);
+  const viewerFollowing = new Set((viewer?.following || []).map(String));
+  res.json({ users: users.map(user => publicUser(user, viewerFollowing)) });
 });
 
 const followersList = async (req, res) => {
   const username = String(req.params.username).toLowerCase().replace(/^@/, "");
   const list = req.path.endsWith("/followers") ? "followers" : "following";
-  const user = await User.findOne({ username }).populate(list, "name username bio profileImage");
+  const [user, viewer] = await Promise.all([User.findOne({ username }).populate(list, "name username bio profileImage"), User.findById(req.user.userId).select("following")]);
   if (!user) return res.status(404).json({ message: "User not found" });
-  res.json({ users: user[list].map(publicUser), list });
+  const viewerFollowing = new Set((viewer?.following || []).map(String));
+  res.json({ users: user[list].map(item => publicUser(item, viewerFollowing)), list });
 };
 router.get("/:username/followers", auth, followersList);
 router.get("/:username/following", auth, followersList);

@@ -61,9 +61,25 @@ router.post("/", auth, async (req, res) => {
 router.get("/", async (req, res) => {
   try {
     const posts = await Post.find()
-      .populate("author", "name username profileImage")
+      .populate("author", "name username profileImage followers following")
       .populate("comments.author", "name username profileImage")
       .sort({ createdAt: -1 });
+
+    // A balanced discovery feed: recent activity remains important, established
+    // accounts get a small boost, and every author still has a chance to appear.
+    const activity = await Post.aggregate([{ $group: { _id: "$author", count: { $sum: 1 } } }]);
+    const activityByAuthor = new Map(activity.map(item => [String(item._id), item.count]));
+    posts.sort((a, b) => {
+      const score = post => {
+        const ageHours = Math.max(0, (Date.now() - new Date(post.createdAt)) / 3600000);
+        const recency = Math.max(0, 72 - ageHours) / 72;
+        const followers = post.author?.followers?.length || 0;
+        const following = post.author?.following?.length || 0;
+        const frequency = activityByAuthor.get(String(post.author?._id)) || 0;
+        return recency * 8 + Math.log1p(followers) * 1.1 + Math.log1p(following) * .25 + Math.min(frequency, 12) * .15;
+      };
+      return score(b) - score(a) || new Date(b.createdAt) - new Date(a.createdAt);
+    });
 
     res.json({
       posts
@@ -125,9 +141,14 @@ router.patch("/:id", auth, async (req, res) => {
   res.json({ post });
 });
 
-router.post("/:id/impression", async (req, res) => {
-  const post = await Post.findByIdAndUpdate(req.params.id, { $inc: { impressions: 1 } }, { new: true }).select("impressions");
+router.post("/:id/impression", auth, async (req, res) => {
+  const post = await Post.findById(req.params.id).select("impressions impressionUsers");
   if (!post) return res.status(404).json({ message: "Post not found" });
+  if (!post.impressionUsers.some(id => id.toString() === req.user.userId)) {
+    post.impressionUsers.push(req.user.userId);
+    post.impressions += 1;
+    await post.save();
+  }
   res.json({ impressions: post.impressions });
 });
 
@@ -154,7 +175,7 @@ router.post("/:id/comments", auth, async (req, res) => {
   if (!text) return res.status(400).json({ message: "Reply cannot be empty" });
   post.comments.push({ author: req.user.userId, text, replyTo: req.body.replyTo || null });
   await post.save();
-  if (post.author.toString() !== req.user.userId) await Notification.create({ recipient: post.author, actor: req.user.userId, type: "comment", post: post._id });
+  if (post.author.toString() !== req.user.userId) await Notification.create({ recipient: post.author, actor: req.user.userId, type: "comment", post: post._id, commentId: post.comments.at(-1)._id.toString() });
   res.status(201).json({ comment: post.comments.at(-1) });
 });
 
