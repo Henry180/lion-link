@@ -115,6 +115,35 @@ router.post("/become-admin", auth, async (req, res) => {
   res.json({ token, user: { id: user._id, name: user.name, email: user.email, username: user.username, role: user.role, bio: user.bio, profileImage: user.profileImage, coverImage: user.coverImage, location: user.location, createdAt: user.createdAt } });
 });
 
+// Password recovery is always tied to the email used when the account was created.
+// Configure RESEND_API_KEY and MAIL_FROM in production to deliver the reset email.
+router.post("/forgot-password", async (req, res) => {
+  const email = String(req.body.email || "").trim().toLowerCase();
+  const user = email && await User.findOne({ email });
+  if (user) {
+    const rawToken = crypto.randomBytes(32).toString("hex");
+    user.passwordResetToken = crypto.createHash("sha256").update(rawToken).digest("hex");
+    user.passwordResetExpiresAt = new Date(Date.now() + 30 * 60 * 1000);
+    await user.save();
+    const resetUrl = `${process.env.APP_URL || `${req.protocol}://${req.get("host")}`}/#reset-password=${rawToken}`;
+    if (process.env.RESEND_API_KEY && process.env.MAIL_FROM) {
+      await fetch("https://api.resend.com/emails", { method: "POST", headers: { Authorization: `Bearer ${process.env.RESEND_API_KEY}`, "Content-Type": "application/json" }, body: JSON.stringify({ from: process.env.MAIL_FROM, to: [user.email], subject: "Reset your Lion Link password", html: `<p>Use this link within 30 minutes to reset your password:</p><p><a href="${resetUrl}">Reset password</a></p>` }) });
+    }
+    if (process.env.NODE_ENV !== "production") console.info(`Lion Link password reset for ${email}: ${resetUrl}`);
+  }
+  res.json({ message: "If that email belongs to a Lion Link account, a reset link has been sent." });
+});
+
+router.post("/reset-password", async (req, res) => {
+  const token = String(req.body.token || ""); const password = String(req.body.password || "");
+  if (password.length < 6) return res.status(400).json({ message: "Password must be at least 6 characters" });
+  const passwordResetToken = crypto.createHash("sha256").update(token).digest("hex");
+  const user = await User.findOne({ passwordResetToken, passwordResetExpiresAt: { $gt: new Date() } });
+  if (!user) return res.status(400).json({ message: "This password-reset link is invalid or has expired." });
+  user.password = await bcrypt.hash(password, 10); user.passwordResetToken = ""; user.passwordResetExpiresAt = null; await user.save();
+  res.json({ message: "Your password has been reset. You can now sign in." });
+});
+
 
 // =====================================================
 // LOGIN

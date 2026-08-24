@@ -129,10 +129,11 @@ $('#submit-post').onclick = async () => {
   feedPosting = true;
   $('#submit-post').disabled = true;
   try {
-    const { post } = await api('/posts', { method: 'POST', body: JSON.stringify({ text, media: selectedMedia }) });
+    const { post } = await api('/posts', { method: 'POST', body: JSON.stringify({ text, media: selectedMedia }), showLoading: true });
     posts.unshift(post);
     renderPosts();
     $('#post-text').value = '';
+    $('#character-count').textContent = '0 / 280';
     selectedMedia = [];
     $('#media-input').value = '';
     $('#media-preview').hidden = true;
@@ -191,13 +192,13 @@ loadPosts = async function() { if (!posts.length) $('#post-feed').innerHTML = '<
 const notificationsView = document.createElement('section');
 notificationsView.className = 'view';
 notificationsView.id = 'notifications-view';
-notificationsView.innerHTML = '<header class="page-header"><div><p class="eyebrow">STAY CONNECTED</p><h1>Notifications</h1></div><button class="icon-button" id="read-notifications" aria-label="Mark all notifications as read">✓</button></header><section id="notification-list" class="notification-list"></section>';
+  notificationsView.innerHTML = '<header class="page-header"><div><p class="eyebrow">STAY CONNECTED</p><h1>Notification</h1></div><button class="icon-button" id="read-notifications" aria-label="Mark all notifications as read">✓</button></header><section id="notification-list" class="notification-list"></section>';
 $('.main-content').append(notificationsView);
 const notificationButton = document.createElement('button');
-notificationButton.className = 'nav-link'; notificationButton.dataset.view = 'notifications'; notificationButton.innerHTML = '<span>♢</span> Notifications <i id="notification-count" hidden>0</i>';
+  notificationButton.className = 'nav-link'; notificationButton.dataset.view = 'notifications'; notificationButton.innerHTML = '<span>♢</span> Notification <i id="notification-count" hidden>0</i>';
 document.querySelector('.main-nav').insertBefore(notificationButton, document.querySelector('.main-nav [data-view="profile"]'));
 const mobileNotificationButton = document.createElement('button');
-mobileNotificationButton.dataset.view = 'notifications'; mobileNotificationButton.innerHTML = '<span>♢</span>Alerts';
+  mobileNotificationButton.dataset.view = 'notifications'; mobileNotificationButton.innerHTML = '<span>♢</span>Notification';
 $('.bottom-nav').insertBefore(mobileNotificationButton, $('.bottom-nav [data-view="profile"]'));
 async function loadNotifications() {
   if (!token) return;
@@ -287,6 +288,59 @@ openChat = function(id) {
     form.onsubmit = async event => { event.preventDefault(); if (sendingMessages.has(id)) return; const text = form.querySelector('input').value.trim(); if (!text && !media) return; sendingMessages.add(id); const send = form.querySelector('[type="submit"]'); send.disabled = true; try { await api(`/conversations/${id}/messages`, { method: 'POST', body: JSON.stringify({ text, media }) }); media = null; await loadChats(); openChat(id); } catch (error) { toast(error.message); } finally { sendingMessages.delete(id); send.disabled = false; } };
   }
 };
+
+// Final, single-source interaction layer. These handlers intentionally run in
+// capture mode so older page handlers cannot submit the same action twice.
+(() => {
+  const seenStories = () => new Set(JSON.parse(localStorage.getItem('lionLinkSeenStories') || '[]'));
+  const saveSeenStories = ids => localStorage.setItem('lionLinkSeenStories', JSON.stringify([...ids]));
+  const originalShow = show;
+  show = view => { if (view === 'profile') closeDrawers?.(); originalShow(view); };
+
+  const applyTheme = dark => { document.body.classList.toggle('dark', dark); localStorage.setItem('lionLinkTheme', dark ? 'dark' : 'light'); $('#theme-toggle').textContent = dark ? '☀' : '◐'; };
+  applyTheme(localStorage.getItem('lionLinkTheme') === 'dark');
+  $('#theme-toggle').onclick = () => applyTheme(!document.body.classList.contains('dark'));
+
+  $('#post-text').addEventListener('input', event => { $('#character-count').textContent = `${event.target.value.length} / 280`; });
+  $('#toggle-password').onclick = () => { const input = $('#login-password'), visible = input.type === 'text'; input.type = visible ? 'password' : 'text'; $('#toggle-password').textContent = visible ? '◉' : '◉̸'; $('#toggle-password').setAttribute('aria-label', visible ? 'Show password' : 'Hide password'); };
+  $('#forgot-password').onclick = async () => { const email = prompt('Enter the email address used to open your Lion Link account:', $('#login-email').value.trim()); if (!email) return; try { const result = await api('/auth/forgot-password', { method: 'POST', body: JSON.stringify({ email }) }); toast(result.message); } catch (error) { toast(error.message); } };
+  // The polished reset-password form is installed after the interaction layer.
+  $('#help-link').onclick = () => { location.href = 'mailto:lionlinkadmin@gmail.com?subject=Lion%20Link%20help%20and%20privacy'; };
+  document.querySelectorAll('[data-info="help"],[data-info="privacy"]').forEach(button => button.onclick = () => { location.href = 'mailto:lionlinkadmin@gmail.com?subject=Lion%20Link%20help%20and%20privacy'; });
+
+  const originalRenderEvents = renderEvents;
+  renderEvents = function() { originalRenderEvents(); const rail = $('#right-event-list'); if (rail) rail.innerHTML = campusEvents.map(event => `<button class="event live-event" type="button" data-view="events"><time><b>${new Date(event.startsAt).toLocaleString(undefined,{month:'short'}).toUpperCase()}</b><strong>${new Date(event.startsAt).getDate()}</strong></time><div><strong>${esc(event.title)}</strong><p>${new Date(event.startsAt).toLocaleString()}${event.location ? ` · ${esc(event.location)}` : ''}</p></div></button>`).join('') || '<p class="empty-profile">No upcoming events.</p>'; };
+
+  const originalRenderMobileDrawers = renderMobileDrawers;
+  renderMobileDrawers = function(users) { originalRenderMobileDrawers(users); const left = $('#mobile-left-drawer'); if (left && !left.querySelector('.drawer-brand')) left.insertAdjacentHTML('afterbegin', '<a class="brand drawer-brand" href="#feed"><span class="brand-mark">L</span><span>Lion <b>Link</b></span></a>'); const right = $('#mobile-right-drawer'); if (right) right.innerHTML = `<h2>Upcoming events</h2>${campusEvents.map(event => `<button data-view="events">${esc(event.title)} · ${new Date(event.startsAt).toLocaleDateString(undefined,{month:'short',day:'numeric'})}</button>`).join('') || '<p>No upcoming events.</p>'}<h2>People you may know</h2>${(users || []).map(personMarkup).join('')}`; };
+
+  const originalLoadStories = loadStories;
+  loadStories = async function() { await originalLoadStories(); const seen = seenStories(); document.querySelectorAll('.has-story').forEach(node => { const username = node.dataset.avatar || node.dataset.profileAvatar; const theirs = stories.filter(story => story.author?.username === username); node.classList.toggle('story-viewed', !!theirs.length && theirs.every(story => seen.has(story._id))); }); };
+
+  openStory = function(story) {
+    const group = stories.filter(item => item.author?.username === story.author?.username).sort((a,b) => new Date(a.createdAt) - new Date(b.createdAt));
+    const index = Math.max(0, group.findIndex(item => item._id === story._id)); const mine = String(story.author?._id || story.author?.id) === String(me?.id);
+    const seen = seenStories(); if (!mine) { seen.add(story._id); saveSeenStories(seen); api(`/stories/${story._id}/view`, { method: 'POST' }).catch(() => {}); }
+    const liked = (story.likes || []).some(id => String(id._id || id) === String(me?.id));
+    const comments = (story.comments || []).map(comment => `<button class="story-comment" data-story-dm="${esc(comment.author?.username || '')}"><b>${esc(comment.author?.name || 'User')}</b> ${esc(comment.text)}</button>`).join('') || '<p class="empty-profile">No comments yet.</p>';
+    const visual = story.media.type === 'video' ? `<video controls autoplay src="${story.media.url}"></video>` : `<img src="${story.media.url}" alt="Story">`;
+    $('#media-modal-content').innerHTML = `<div class="modal-media">${visual}</div><p class="story-caption">${esc(story.caption || '')}</p><div class="story-actions"><button data-story-like="${story._id}" class="${liked ? 'liked' : ''}">♥ ${story.likes?.length || 0}</button><button data-story-comment="${story._id}">💬 ${story.comments?.length || 0}</button></div><div class="story-comments" id="story-comments-${story._id}" hidden>${comments}</div>${group.length > 1 ? `<div class="reels-actions"><button data-story-step="${story._id}:prev" ${index === 0 ? 'disabled' : ''}>‹ Previous</button><small>${index + 1} of ${group.length}</small><button data-story-step="${story._id}:next" ${index === group.length - 1 ? 'disabled' : ''}>Next ›</button></div>` : ''}`;
+    $('#media-modal').hidden = false;
+  };
+
+  document.addEventListener('click', async event => {
+    const follow = event.target.closest('[data-follow]');
+    if (follow) { event.preventDefault(); event.stopImmediatePropagation(); if (follow.dataset.followBusy || follow.classList.contains('following')) return; follow.dataset.followBusy = '1'; follow.disabled = true; try { const result = await api(`/users/${encodeURIComponent(follow.dataset.follow)}/follow`, { method:'POST' }); follow.textContent='Following'; follow.classList.add('following'); followStates.set(follow.dataset.follow, true); if (viewedProfile?.username === follow.dataset.follow) { viewedProfile.isFollowing=true; viewedProfile.followers=result.followers; renderProfile(viewedProfile); } } catch(error) { toast(error.message); } finally { delete follow.dataset.followBusy; follow.disabled=false; } return; }
+    const item = event.target.closest('[data-notification-type]');
+    if (item) { event.preventDefault(); event.stopImmediatePropagation(); if (!item.classList.contains('read')) { await api(`/notifications/${item.dataset.notificationId}/read`, { method:'POST' }).catch(()=>{}); item.classList.remove('unread'); item.classList.add('read'); loadNotifications(); } if (item.dataset.notificationType === 'follow') return openProfile(item.dataset.notificationActor); if (item.dataset.notificationPost) { show('feed'); const box = $('#comments-'+item.dataset.notificationPost); if (box) box.hidden=false; $('#post-'+item.dataset.notificationPost)?.scrollIntoView({behavior:'smooth',block:'center'}); } else if (item.dataset.notificationType === 'message') { await loadChats(); show('messages'); openChat(item.dataset.notificationConversation); } return; }
+    const like = event.target.closest('[data-story-like]'); if (like) { const story = stories.find(s=>s._id===like.dataset.storyLike); try { const result=await api(`/stories/${story._id}/like`,{method:'POST'}); story.likes = result.liked ? [...(story.likes||[]),me.id] : (story.likes||[]).filter(id=>String(id._id||id)!==String(me.id)); openStory(story); } catch(error){toast(error.message);} return; }
+    const comment = event.target.closest('[data-story-comment]'); if (comment) { const story=stories.find(s=>s._id===comment.dataset.storyComment); const text=prompt('Write a comment. It will open a direct message with the poster.'); if (!text) return; try { await api(`/stories/${story._id}/comments`,{method:'POST',body:JSON.stringify({text})}); const {conversation}=await api('/conversations',{method:'POST',body:JSON.stringify({username:story.author.username})}); await loadChats(); show('messages'); openChat(conversation._id); } catch(error){toast(error.message);} return; }
+    const step=event.target.closest('[data-story-step]'); if(step){const [id,direction]=step.dataset.storyStep.split(':');const current=stories.find(s=>s._id===id),group=stories.filter(s=>s.author?.username===current.author?.username).sort((a,b)=>new Date(a.createdAt)-new Date(b.createdAt)),index=group.findIndex(s=>s._id===id);openStory(group[index+(direction==='next'?1:-1)]);return;}
+    const dm=event.target.closest('[data-story-dm]'); if(dm?.dataset.storyDm){const {conversation}=await api('/conversations',{method:'POST',body:JSON.stringify({username:dm.dataset.storyDm})});await loadChats();show('messages');openChat(conversation._id);}
+  }, true);
+
+  loadNotifications = async function() { if (!token) return; try { const {notifications,unread,unreadMessages}=await api('/notifications'); const count=$('#notification-count'); count.textContent=unread; count.hidden=!unread; const mobile=$('.bottom-nav [data-view="notifications"]'); if(mobile) mobile.innerHTML=`<span>♢</span>Notification${unread?`<i class="mobile-notification-count">${unread}</i>`:''}`; $('#notification-list').innerHTML=notifications.map(item=>`<button type="button" class="notification ${item.read?'read':'unread'}" data-notification-id="${item._id}" data-notification-type="${item.type}" data-notification-actor="${esc(item.actor?.username || '')}" data-notification-post="${item.post?._id||item.post||''}" data-notification-conversation="${item.conversation?._id||item.conversation||''}"><div class="avatar avatar-gold">${initials(item.actor?.name)}</div><p><b>${esc(item.actor?.name||'Someone')}</b> ${item.type==='follow'?'started following you':item.type==='like'?'liked your post':item.type==='comment'?'commented on your post':'sent you a message'}<small>${when(item.createdAt)}</small></p></button>`).join('')||'<p class="empty-profile">You have no notifications yet.</p>'; } catch(error){console.warn(error);} };
+})();
 document.addEventListener('click', event => { if (event.target.closest('[data-close-chat]')) { $('#messages-view').classList.remove('chat-open'); activeChat = null; } });
 
 // Reels use a vertical, touch-friendly stream instead of one video at a time.
@@ -405,7 +459,7 @@ loadNotifications = async function() {
     const count = $('#notification-count'); count.textContent = unread; count.hidden = !unread;
     const messageCount = document.querySelector('[data-view="messages"] i'); if (messageCount) { messageCount.textContent = unreadMessages || ''; messageCount.hidden = !unreadMessages; }
     $('#notification-list').innerHTML = notifications.map(item => { const image=item.actor?.profileImage?` style="background-image:url('${item.actor.profileImage}');background-size:cover"`:''; return `<button type="button" class="notification ${item.read ? '' : 'unread'}" data-notification-type="${item.type}" data-notification-post="${item.post?._id || item.post || ''}" data-notification-comment="${item.commentId || ''}" data-notification-conversation="${item.conversation?._id || item.conversation || ''}"><div class="avatar avatar-gold"${image}>${item.actor?.profileImage?'':initials(item.actor?.name)}</div><p><b>${esc(item.actor?.name || 'Someone')}</b> ${item.type === 'like' ? 'liked your post' : item.type === 'comment' ? 'commented on your post' : item.type === 'follow' ? 'started following you' : 'sent you a message'}<small>${when(item.createdAt)}</small></p></button>`; }).join('') || '<p class="empty-profile">You have no notifications yet.</p>';
-    const mobile = $('.bottom-nav [data-view="notifications"]'); if (mobile) mobile.innerHTML = `<span>♢</span>Alerts${unread ? `<i class="mobile-notification-count">${unread}</i>` : ''}`;
+    const mobile = $('.bottom-nav [data-view="notifications"]'); if (mobile) mobile.innerHTML = `<span>♢</span>Notification${unread ? `<i class="mobile-notification-count">${unread}</i>` : ''}`;
   } catch (error) { console.warn(error); }
 };
 document.addEventListener('click', async event => {
@@ -551,3 +605,144 @@ openChat = function(id) {
   }).join('');
   requestAnimationFrame(() => { list.scrollTop = list.scrollHeight; });
 };
+
+// Keep the final notification renderer after all legacy enhancements.
+loadNotifications = async function() {
+  if (!token) return;
+  try {
+    const { notifications, unread } = await api('/notifications');
+    const count = $('#notification-count'); count.textContent = unread; count.hidden = !unread;
+    const mobile = $('.bottom-nav [data-view="notifications"]');
+    if (mobile) mobile.innerHTML = `<span>♢</span>Notification${unread ? `<i class="mobile-notification-count">${unread}</i>` : ''}`;
+    $('#notification-list').innerHTML = notifications.map(item => `<button type="button" class="notification ${item.read ? 'read' : 'unread'}" data-notification-id="${item._id}" data-notification-type="${item.type}" data-notification-actor="${esc(item.actor?.username || '')}" data-notification-post="${item.post?._id || item.post || ''}" data-notification-conversation="${item.conversation?._id || item.conversation || ''}"><div class="avatar avatar-gold">${initials(item.actor?.name)}</div><p><b>${esc(item.actor?.name || 'Someone')}</b> ${item.type === 'follow' ? 'started following you' : item.type === 'like' ? 'liked your post' : item.type === 'comment' ? 'commented on your post' : 'sent you a message'}<small>${when(item.createdAt)}</small></p></button>`).join('') || '<p class="empty-profile">You have no notifications yet.</p>';
+  } catch (error) { console.warn(error); }
+};
+// The previous code predates the visible top-right switch; restore saved mode.
+document.body.classList.toggle('dark', localStorage.getItem('lionLinkTheme') === 'dark');
+$('#theme-toggle').textContent = document.body.classList.contains('dark') ? '☀' : '◐';
+
+// Nest reply cards beneath their parent reply, giving every post an X-style thread.
+const renderPostsWithThreadLayout = renderPosts;
+renderPosts = function() {
+  renderPostsWithThreadLayout();
+  posts.forEach(post => {
+    const thread = $('#comments-' + post._id); if (!thread) return;
+    (post.comments || []).filter(comment => comment.replyTo).forEach(comment => {
+      const reply = thread.querySelector('#comment-' + comment._id);
+      const parent = thread.querySelector('#comment-' + comment.replyTo);
+      if (reply && parent) { reply.classList.add('comment-reply'); parent.append(reply); }
+    });
+  });
+};
+
+// Accessible password recovery and a lightweight, local image cropper.
+// Images are cropped in the browser before upload; no extra copy is retained.
+(() => {
+  const resetModal = $('#reset-password-modal');
+  const resetForm = $('#reset-password-form');
+  const resetCopy = $('#reset-password-copy');
+  const resetEmail = $('#reset-email');
+  let cropTarget = null;
+  let crop = { image: null, scale: 1, base: 1, x: 0, y: 0, drag: null };
+  const stage = $('.crop-stage');
+  const cropImage = $('#crop-image');
+  const cropZoom = $('#crop-zoom');
+
+  const redrawCrop = () => {
+    if (!crop.image) return;
+    const size = stage.clientWidth;
+    const width = crop.image.naturalWidth * crop.base * crop.scale;
+    const height = crop.image.naturalHeight * crop.base * crop.scale;
+    crop.x = Math.max(-(width - size) / 2, Math.min((width - size) / 2, crop.x));
+    crop.y = Math.max(-(height - size) / 2, Math.min((height - size) / 2, crop.y));
+    cropImage.style.width = `${width}px`;
+    cropImage.style.height = `${height}px`;
+    cropImage.style.left = `${size / 2 + crop.x}px`;
+    cropImage.style.top = `${size / 2 + crop.y}px`;
+  };
+
+  const openCrop = index => {
+    const media = selectedMedia[index];
+    if (!media || media.type !== 'image') return;
+    cropTarget = index;
+    crop.image = new Image();
+    crop.image.onload = () => {
+      crop.base = Math.max(stage.clientWidth / crop.image.naturalWidth, stage.clientHeight / crop.image.naturalHeight);
+      crop.scale = 1; crop.x = 0; crop.y = 0; cropZoom.value = '1';
+      cropImage.src = media.url; redrawCrop(); $('#crop-modal').hidden = false;
+    };
+    crop.image.src = media.url;
+  };
+
+  const renderSelectedMedia = () => {
+    $('#media-preview').hidden = !selectedMedia.length;
+    $('#media-preview').innerHTML = selectedMedia.map((item, index) => `<div>${item.type === 'video' ? `<video src="${item.url}"></video>` : `<img src="${item.url}" alt="Selected image">`}<button type="button" data-crop-media="${index}" ${item.type !== 'image' ? 'hidden' : ''}>Crop</button><button type="button" data-remove-media="${index}" aria-label="Remove media">×</button></div>`).join('');
+  };
+
+  $('#media-input').onchange = async event => {
+    try {
+      selectedMedia = await Promise.all([...event.target.files].slice(0, 8).filter(file => file.size < 5 * 1024 * 1024).map(fileData));
+      renderSelectedMedia();
+      if (event.target.files.length > 8) toast('Only the first 8 files were selected.');
+    } catch { toast('That media could not be read.'); }
+  };
+  document.addEventListener('click', event => {
+    const cropButton = event.target.closest('[data-crop-media]');
+    if (cropButton) { event.preventDefault(); openCrop(Number(cropButton.dataset.cropMedia)); }
+  }, true);
+  cropZoom.oninput = () => { crop.scale = Number(cropZoom.value); redrawCrop(); };
+  stage.addEventListener('pointerdown', event => { crop.drag = { x: event.clientX, y: event.clientY, left: crop.x, top: crop.y }; stage.setPointerCapture(event.pointerId); });
+  stage.addEventListener('pointermove', event => { if (!crop.drag) return; crop.x = crop.drag.left + event.clientX - crop.drag.x; crop.y = crop.drag.top + event.clientY - crop.drag.y; redrawCrop(); });
+  stage.addEventListener('pointerup', () => { crop.drag = null; });
+  $('#cancel-crop').onclick = () => { $('#crop-modal').hidden = true; };
+  $('#apply-crop').onclick = () => {
+    if (cropTarget === null || !crop.image) return;
+    const output = document.createElement('canvas'); output.width = output.height = 1080;
+    const size = stage.clientWidth, sourceScale = crop.base * crop.scale;
+    const sourceSize = size / sourceScale;
+    const sx = Math.max(0, Math.min(crop.image.naturalWidth - sourceSize, crop.image.naturalWidth / 2 - sourceSize / 2 - crop.x / sourceScale));
+    const sy = Math.max(0, Math.min(crop.image.naturalHeight - sourceSize, crop.image.naturalHeight / 2 - sourceSize / 2 - crop.y / sourceScale));
+    output.getContext('2d').drawImage(crop.image, sx, sy, sourceSize, sourceSize, 0, 0, 1080, 1080);
+    selectedMedia[cropTarget] = { url: output.toDataURL('image/jpeg', .9), type: 'image' };
+    renderSelectedMedia(); $('#crop-modal').hidden = true;
+  };
+
+  $('#forgot-password').onclick = () => { resetEmail.value = $('#login-email').value.trim(); resetModal.hidden = false; resetEmail.focus(); };
+  resetForm.onsubmit = async event => {
+    event.preventDefault();
+    try { const result = await api('/auth/forgot-password', { method: 'POST', body: JSON.stringify({ email: resetEmail.value.trim() }), showLoading: true }); resetModal.hidden = true; toast(result.message); }
+    catch (error) { toast(error.message); }
+  };
+  if (location.hash.startsWith('#reset-password=')) {
+    const resetToken = location.hash.slice('#reset-password='.length);
+    resetCopy.textContent = 'Choose a new password for your Lion Link account.';
+    resetForm.innerHTML = '<button class="modal-close" type="button" data-close-modal="reset-password-modal" aria-label="Close password reset">×</button><h2>Choose a new password</h2><p>Use at least six characters.</p><label>New password<span class="password-field"><input id="new-reset-password" type="password" required minlength="6" autocomplete="new-password"><button id="toggle-reset-password" type="button" aria-label="Show password">◉</button></span></label><button class="small-post" type="submit">Reset password</button>';
+    resetModal.hidden = false;
+    resetForm.onsubmit = async event => { event.preventDefault(); try { await api('/auth/reset-password', { method: 'POST', body: JSON.stringify({ token: resetToken, password: $('#new-reset-password').value }), showLoading: true }); history.replaceState(null, '', location.pathname); resetModal.hidden = true; toast('Password reset — please sign in.'); } catch (error) { toast(error.message); } };
+    $('#toggle-reset-password').onclick = () => { const input = $('#new-reset-password'); input.type = input.type === 'password' ? 'text' : 'password'; };
+    resetForm.querySelector('[data-close-modal]').onclick = () => { resetModal.hidden = true; };
+  }
+  const toggleTheme = () => $('#theme-toggle').click();
+  $('#desktop-theme-toggle').onclick = toggleTheme;
+})();
+
+// Announcement badges reflect new official updates and clear as soon as the
+// announcement screen is opened, matching the notification interaction.
+(() => {
+  const refreshAnnouncementBadge = () => {
+    const badge = $('#announcement-count'); if (!badge) return;
+    const lastSeen = Number(localStorage.getItem('lionLinkAnnouncementsSeenAt') || 0);
+    const unread = announcements.filter(item => new Date(item.createdAt).getTime() > lastSeen).length;
+    badge.textContent = unread; badge.hidden = !unread;
+  };
+  const previousLoadAnnouncements = loadAnnouncements;
+  loadAnnouncements = async function() { await previousLoadAnnouncements(); refreshAnnouncementBadge(); };
+  const previousShow = show;
+  show = function(view) {
+    previousShow(view);
+    if (view === 'announcements') {
+      localStorage.setItem('lionLinkAnnouncementsSeenAt', String(Date.now()));
+      refreshAnnouncementBadge();
+    }
+  };
+})();

@@ -17,7 +17,7 @@
         <a class="brand" href="#feed" aria-label="Lion Link home"><span class="brand-mark">L</span><span>Lion <b>Link</b></span></a>
         <nav class="main-nav" aria-label="Main navigation">
           <button class="nav-link active" data-view="feed"><span>⌂</span> Home</button>
-          <button class="nav-link" data-view="announcements"><span>◉</span> Announcements <i>3</i></button>
+          <button class="nav-link" data-view="announcements"><span>◉</span> Announcements <i id="announcement-count" hidden>0</i></button>
           <button class="nav-link" data-view="messages"><span>✉</span> Messages</button>
           <button class="nav-link" data-view="events"><span>◇</span> Events</button>
           <button class="nav-link" data-view="profile"><span>♙</span> Profile</button>
@@ -28,9 +28,9 @@
       </aside>
 
       <main class="main-content">
-        <header class="mobile-header"><a class="brand" href="#feed"><span class="brand-mark">L</span> Lion <b>Link</b></a></header>
+        <header class="mobile-header"><a class="brand" href="#feed"><span class="brand-mark">L</span> Lion <b>Link</b></a><button class="theme-toggle" id="theme-toggle" type="button" aria-label="Toggle dark mode">◐</button></header>
         <section class="view active" id="feed-view">
-          <header class="page-header"><div><p class="eyebrow">YOUR CAMPUS, CONNECTED</p><h1>Home feed</h1></div><button class="icon-button" aria-label="More feed options">•••</button></header>
+          <header class="page-header"><div><p class="eyebrow">YOUR CAMPUS, CONNECTED</p><h1>Home feed</h1></div><div class="header-actions"><button class="theme-toggle desktop-theme-toggle" id="desktop-theme-toggle" type="button" aria-label="Toggle dark mode">◐</button><button class="icon-button" aria-label="More feed options">•••</button></div></header>
           <section class="announcement-strip" id="pinned-announcement"><div class="megaphone">📣</div><div><span>PINNED ANNOUNCEMENT</span><strong>Welcome back, UNN Lions &amp; Lionesses!</strong><p>Stay connected with news, updates, and campus life.</p></div><button class="close-strip" aria-label="Dismiss announcement">×</button></section>
           <section class="composer"><div class="avatar avatar-gold">JS</div><div class="composer-body"><textarea id="post-text" maxlength="280" placeholder="What's happening on campus?"></textarea><input id="media-input" type="file" accept="image/*,video/*" multiple hidden /><div id="media-preview" class="media-preview" hidden></div><div class="composer-footer"><div><button class="tool-button media-picker" id="media-picker" title="Add photos or videos" type="button">▣</button><button class="tool-button" data-add="😊" title="Add emoji" type="button">☺</button><span id="character-count">0 / 280</span></div><button class="small-post" id="submit-post">Post</button></div></div></section>
           <div class="feed-label"><span>Latest from your community</span><button id="refresh-feed">↻ Refresh</button></div>
@@ -44,7 +44,7 @@
         </section>
 
         <section class="view messages-layout" id="messages-view">
-          <header class="page-header messages-title"><div><p class="eyebrow">KEEP IN TOUCH</p><h1>Messages</h1></div><button class="icon-button" id="open-user-search" aria-label="Find people">+</button></header>
+          <header class="page-header messages-title"><div><p class="eyebrow">KEEP IN TOUCH</p><h1>Messages</h1></div><button class="icon-button friend-search-button" id="open-user-search" aria-label="Search for a friend">⌕</button></header>
           <div class="chat-shell"><aside class="conversation-list"><label class="search"><span>⌕</span><input placeholder="Search messages" /></label><div id="conversations"></div></aside><section class="chat-panel"><div class="chat-empty" id="chat-empty"><span>✉</span><h2>Your messages</h2><p>Select a conversation to start chatting.</p></div><div id="active-chat" hidden></div></section></div>
         </section>
 
@@ -54,12 +54,12 @@
       </main>
 
       <aside class="right-rail">
-        <section class="rail-card"><div class="card-heading"><h2>Upcoming events</h2><button>See all</button></div><div class="event"><time><b>SEP</b><strong>18</strong></time><div><strong>Student Club Fair</strong><p>12:00 PM · UNN Campus</p></div></div><div class="event"><time><b>SEP</b><strong>20</strong></time><div><strong>Lions Social Night</strong><p>7:00 PM · Campus Centre</p></div></div></section>
+        <section class="rail-card" id="right-events"><div class="card-heading"><h2>Upcoming events</h2><button data-view="events">See all</button></div><div id="right-event-list"><p class="empty-profile">No upcoming events.</p></div></section>
         <section class="rail-card"><div class="card-heading"><h2>Who to follow</h2><button>Refresh</button></div><div id="people-list"></div></section>
         <footer>© <span id="copyright-year"></span> Lion Link · <button data-info="help">Help</button> · <button data-info="privacy">Privacy</button> · <button data-info="terms">Terms</button></footer>
       </aside>
     </div>
-    <nav class="bottom-nav" aria-label="Mobile navigation"><button data-view="feed" class="active"><span>⌂</span>Home</button><button data-view="announcements"><span>◉</span>Updates</button><button data-view="messages"><span>✉</span>Messages</button><button data-view="profile"><span>♙</span>Profile</button></nav>
+    <nav class="bottom-nav" aria-label="Mobile navigation"><button data-view="feed" class="active"><span>⌂</span>Home</button><button data-view="announcements"><span>◉</span>Announcement</button><button data-view="messages"><span>✉</span>Messages</button><button data-view="profile"><span>♙</span>Profile</button></nav>
     <div class="toast" id="toast" role="status"></div>
     <div class="edit-modal" id="download-lion-link-popup" hidden><section class="edit-card"><button class="modal-close" type="button" data-close-modal="download-lion-link-popup" aria-label="Close download prompt">×</button><span class="brand-mark">L</span><h2>Download Lion Link</h2><p>Keep Lion Link on your home screen for faster access.</p><button class="small-post" id="download-lion-link">Download Lion Link</button></section></div>
     <button id="floating-post" class="post-button" type="button" hidden aria-label="Create post">+</button>
@@ -70,7 +70,9 @@
     <div class="edit-modal" id="reels-modal" hidden><button class="modal-close" id="close-reels" type="button">×</button><div class="edit-card reels-card"><div id="reels-content"></div><div class="reels-actions"><button id="reel-prev" type="button">‹ Previous</button><button id="reel-next" type="button">Next ›</button></div></div></div>
     <div class="media-modal" id="media-modal" hidden><button class="modal-close" data-close-modal="media-modal" aria-label="Close gallery">×</button><div id="media-modal-content"></div></div>
     <div class="edit-modal" id="edit-modal" hidden><form class="edit-card" id="edit-profile-form"><button class="modal-close" type="button" data-close-modal="edit-modal" aria-label="Close profile editor">×</button><h2>Edit profile</h2><label>Display name<input id="edit-name" maxlength="30" /></label><label>Bio<textarea id="edit-bio" maxlength="160"></textarea></label><label>Profile photo<input id="edit-avatar" type="file" accept="image/*" /></label><label>Cover photo<input id="edit-cover" type="file" accept="image/*" /></label><button class="small-post">Save changes</button></form></div>
-    <div class="login-overlay" id="login-overlay" aria-modal="true" role="dialog"><form class="login-card" id="login-form"><span class="brand-mark">L</span><h1>Welcome to Lion Link</h1><p>Create your account before joining the community.</p><label>Action<select id="login-mode"><option value="signup">Create account</option><option value="login">Sign in</option></select></label><label id="login-name-field">Display name<input id="login-name" maxlength="30" /></label><label id="login-username-field">Unique username<input id="login-username" maxlength="20" placeholder="e.g. lioness23" /></label><label>UNN email / username<input id="login-email" required /></label><label>Password<input id="login-password" type="password" required minlength="6" autocomplete="current-password" /></label><button class="post-button" type="submit">Continue</button><small>Users must sign up once; then they can sign in.</small></form></div>
+    <div class="edit-modal" id="crop-modal" hidden><section class="edit-card crop-card"><button class="modal-close" type="button" data-close-modal="crop-modal" aria-label="Close image cropper">×</button><h2>Crop image</h2><p>Drag the image to choose what appears in your post.</p><div class="crop-stage"><img id="crop-image" alt="Image crop preview" /></div><label>Zoom<input id="crop-zoom" type="range" min="1" max="3" value="1" step="0.01" /></label><div class="crop-actions"><button type="button" id="cancel-crop">Cancel</button><button type="button" class="small-post" id="apply-crop">Apply crop</button></div></section></div>
+    <div class="edit-modal" id="reset-password-modal" hidden><form class="edit-card" id="reset-password-form"><button class="modal-close" type="button" data-close-modal="reset-password-modal" aria-label="Close password reset">×</button><h2>Reset password</h2><p id="reset-password-copy">Enter the email used to create your Lion Link account.</p><label>Email<input id="reset-email" type="email" required autocomplete="email" /></label><button class="small-post" type="submit">Send reset link</button></form></div>
+    <div class="login-overlay" id="login-overlay" aria-modal="true" role="dialog"><form class="login-card" id="login-form"><span class="brand-mark">L</span><h1>Welcome to Lion Link</h1><p>Create your account before joining the community.</p><label>Action<select id="login-mode"><option value="signup">Create account</option><option value="login">Sign in</option></select></label><label id="login-name-field">Display name<input id="login-name" maxlength="30" /></label><label id="login-username-field">Unique username<input id="login-username" maxlength="20" placeholder="e.g. lioness23" /></label><label>UNN email / username<input id="login-email" required /></label><label>Password<span class="password-field"><input id="login-password" type="password" required minlength="6" autocomplete="current-password" /><button id="toggle-password" type="button" aria-label="Show password">◉</button></span></label><button class="text-link" id="forgot-password" type="button">Forgot password?</button><button class="post-button" type="submit">Continue</button><small>Users must sign up once; then they can sign in.</small></form></div>
    
 
     <link rel="stylesheet" href="styles.css" />

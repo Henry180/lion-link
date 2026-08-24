@@ -53,11 +53,13 @@ router.post("/:username/follow", auth, async (req, res) => {
   if (!target) return res.status(404).json({ message: "User not found" });
   if (target._id.equals(actor._id)) return res.status(400).json({ message: "You cannot follow yourself" });
   const alreadyFollowing = actor.following.some(id => id.equals(target._id));
-  actor.following = alreadyFollowing ? actor.following.filter(id => !id.equals(target._id)) : [...actor.following, target._id];
-  target.followers = alreadyFollowing ? target.followers.filter(id => !id.equals(actor._id)) : [...target.followers, actor._id];
+  // POST /follow is deliberately idempotent: repeated taps must never create
+  // duplicate follows or unexpectedly undo an existing follow.
+  actor.following = alreadyFollowing ? actor.following : [...actor.following, target._id];
+  target.followers = alreadyFollowing ? target.followers : [...target.followers, actor._id];
   await Promise.all([actor.save(), target.save()]);
   if (!alreadyFollowing) await Notification.create({ recipient: target._id, actor: actor._id, type: "follow" });
-  res.json({ following: !alreadyFollowing, followers: target.followers.length, followingCount: actor.following.length });
+  res.json({ following: true, followers: target.followers.length, followingCount: actor.following.length });
 });
 
 module.exports = router;

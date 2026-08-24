@@ -2,7 +2,15 @@
 
 ## 1. Deploy the API first
 
-Deploy the `backend` folder to a Node.js host such as Render or Railway. Add every value from `backend/.env.example` as an environment variable, using real secret values. Set `CLIENT_ORIGIN` to the final Netlify address. Confirm the API host responds at `https://YOUR-API/`.
+Deploy the `backend` folder to a Node.js host such as Render or Railway. Add every value from `backend/.env.example` as an environment variable, using real secret values. Set `CLIENT_ORIGIN` and `APP_URL` to the final website address. Confirm the API host responds at `https://YOUR-API/`.
+
+### Enable real password-reset emails
+
+1. Create a Resend account, add and verify a domain you own (for example, `lionlink.example`), then create an API key.
+2. In the backend host's **Environment Variables** / **Secrets** page, add `RESEND_API_KEY` with that key and `MAIL_FROM` with a verified sender such as `Lion Link <noreply@lionlink.example>`.
+3. Set `APP_URL` to your final public Lion Link site URL, for example `https://lionlink.example`. This makes the reset link open the correct website.
+4. Save the variables and redeploy the backend. Do not put the Resend key in Netlify, Cloudflare Pages, or frontend files.
+5. Test with a real account: choose **Forgot password**, enter the registration email, and use the link received within 30 minutes.
 
 ## 2. Deploy to Netlify
 

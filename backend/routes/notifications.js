@@ -17,4 +17,9 @@ router.post("/read", auth, async (req, res) => {
   res.status(204).end();
 });
 
+router.post("/:id/read", auth, async (req, res) => {
+  await Notification.updateOne({ _id: req.params.id, recipient: req.user.userId, read: false }, { read: true });
+  res.status(204).end();
+});
+
 module.exports = router;
