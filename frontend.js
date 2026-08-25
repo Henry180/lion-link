@@ -459,7 +459,7 @@ document.addEventListener('submit', async event => {
   const submit = event.target.querySelector('button'); submit.disabled = true;
   try {
     await api(`/posts/${postId}/comments`, { method: 'POST', body: JSON.stringify({ text, replyTo: event.target.dataset.replyTo || null }) });
-    event.target.reset(); delete event.target.dataset.replyTo; await loadPosts();
+    event.target.reset(); delete event.target.dataset.replyTo; await loadPosts({silent:true});
     const box = $('#comments-' + postId); if (box) box.hidden = false;
   } catch (error) { toast(error.message); }
   finally { replying.delete(postId); submit.disabled = false; }
