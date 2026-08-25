@@ -37,7 +37,7 @@ router.post("/", auth, async (req, res) => {
     });
 
     const populatedPost = await Post.findById(post._id)
-      .populate("author", "name username profileImage");
+    .populate("author", "name username profileImage role");
 
     res.status(201).json({
       message: "Post created successfully",
@@ -61,8 +61,8 @@ router.post("/", auth, async (req, res) => {
 router.get("/", async (req, res) => {
   try {
     const posts = await Post.find()
-      .populate("author", "name username profileImage followers following")
-      .populate("comments.author", "name username profileImage")
+      .populate("author", "name username profileImage role followers following")
+      .populate("comments.author", "name username profileImage role")
       .sort({ createdAt: -1 });
 
     // A balanced discovery feed: recent activity remains important, established

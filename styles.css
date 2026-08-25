@@ -1375,8 +1375,13 @@ footer {
 }
 
 .comment {
+  display: flex;
+  gap: 8px;
   padding: 5px 0;
 }
+
+.comment-body { flex: 1; min-width: 0; }
+.comment-avatar { flex: 0 0 28px; width: 28px; height: 28px; padding: 0 !important; background-position: center; background-repeat: no-repeat; cursor: pointer; }
 
 .comment-line { position: relative; display: flex; align-items: start; gap: 6px; }
 .comment-line p { flex: 1; }
@@ -1400,6 +1405,8 @@ footer {
 
 .comment-author {
   font-weight: 700 !important;
+  color: var(--ink) !important;
+  padding: 0 !important;
 }
 
 .comment-thread form {

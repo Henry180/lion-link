@@ -3,11 +3,11 @@ const User = require("../models/User");
 const auth = require("../middleware/auth");
 const Notification = require("../models/Notification");
 
-const publicUser = (user, viewerFollowing = null) => ({ id: user._id, name: user.name, username: user.username, bio: user.bio, profileImage: user.profileImage, coverImage: user.coverImage, location: user.location, followers: user.followers?.length || 0, following: user.following?.length || 0, createdAt: user.createdAt, ...(viewerFollowing ? { isFollowing: viewerFollowing.has(String(user._id)) } : {}) });
+const publicUser = (user, viewerFollowing = null) => ({ id: user._id, name: user.name, username: user.username, role: user.role, bio: user.bio, profileImage: user.profileImage, coverImage: user.coverImage, location: user.location, followers: user.followers?.length || 0, following: user.following?.length || 0, createdAt: user.createdAt, ...(viewerFollowing ? { isFollowing: viewerFollowing.has(String(user._id)) } : {}) });
 
 router.get("/suggestions/all", auth, async (req, res) => {
   const [users, viewer] = await Promise.all([
-    User.find({ _id: { $ne: req.user.userId } }).select("name username bio profileImage followers following createdAt").sort({ createdAt: -1 }),
+    User.find({ _id: { $ne: req.user.userId } }).select("name username role bio profileImage followers following createdAt").sort({ createdAt: -1 }),
     User.findById(req.user.userId).select("following")
   ]);
   const viewerFollowing = new Set((viewer?.following || []).map(String));
@@ -18,7 +18,7 @@ router.get("/search/:query", auth, async (req, res) => {
   const query = String(req.params.query || "").trim();
   if (!query) return res.json({ users: [] });
   const [users, viewer] = await Promise.all([
-    User.find({ _id: { $ne: req.user.userId }, $or: [{ name: new RegExp(query, "i") }, { username: new RegExp(query.replace(/^@/, ""), "i") }] }).select("name username bio profileImage followers following createdAt").limit(20),
+    User.find({ _id: { $ne: req.user.userId }, $or: [{ name: new RegExp(query, "i") }, { username: new RegExp(query.replace(/^@/, ""), "i") }] }).select("name username role bio profileImage followers following createdAt").limit(20),
     User.findById(req.user.userId).select("following")
   ]);
   const viewerFollowing = new Set((viewer?.following || []).map(String));
@@ -39,7 +39,7 @@ router.get("/:username/following", auth, followersList);
 router.get("/:username", auth, async (req, res) => {
   const username = String(req.params.username).toLowerCase().replace(/^@/, "");
   const [user, viewer] = await Promise.all([
-    User.findOne({ username }).select("name username bio profileImage coverImage location followers following createdAt"),
+    User.findOne({ username }).select("name username role bio profileImage coverImage location followers following createdAt"),
     User.findById(req.user.userId).select("following")
   ]);
   if (!user) return res.status(404).json({ message: "User not found" });
@@ -53,13 +53,12 @@ router.post("/:username/follow", auth, async (req, res) => {
   if (!target) return res.status(404).json({ message: "User not found" });
   if (target._id.equals(actor._id)) return res.status(400).json({ message: "You cannot follow yourself" });
   const alreadyFollowing = actor.following.some(id => id.equals(target._id));
-  // POST /follow is deliberately idempotent: repeated taps must never create
-  // duplicate follows or unexpectedly undo an existing follow.
-  actor.following = alreadyFollowing ? actor.following : [...actor.following, target._id];
-  target.followers = alreadyFollowing ? target.followers : [...target.followers, actor._id];
+  // The follow control is a toggle: a second tap unfollows the account.
+  actor.following = alreadyFollowing ? actor.following.filter(id => !id.equals(target._id)) : [...actor.following, target._id];
+  target.followers = alreadyFollowing ? target.followers.filter(id => !id.equals(actor._id)) : [...target.followers, actor._id];
   await Promise.all([actor.save(), target.save()]);
   if (!alreadyFollowing) await Notification.create({ recipient: target._id, actor: actor._id, type: "follow" });
-  res.json({ following: true, followers: target.followers.length, followingCount: actor.following.length });
+  res.json({ following: !alreadyFollowing, followers: target.followers.length, followingCount: actor.following.length });
 });
 
 module.exports = router;
