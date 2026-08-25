@@ -43,8 +43,12 @@ setTimeout(()=>{if(token)loadStories().catch(()=>{})},600);
 let deferredInstall;
 window.addEventListener('beforeinstallprompt', event => { event.preventDefault(); deferredInstall=event; if (!sessionStorage.getItem('lionLinkInstallPromptShown')) { sessionStorage.setItem('lionLinkInstallPromptShown', '1'); $('#download-lion-link-popup').hidden=false; } });
 if ('serviceWorker' in navigator) navigator.serviceWorker.register('./sw.js');
-$('#install-app').onclick=async()=>{if(!deferredInstall)return toast('Use your browser menu and choose “Install app” or “Add to Home Screen”.');deferredInstall.prompt();await deferredInstall.userChoice;deferredInstall=null;};
-$('#download-lion-link').onclick=async()=>{ $('#download-lion-link-popup').hidden=true; $('#install-app').click(); };
+async function promptLionLinkInstall(){
+ if(!deferredInstall){toast('Use your browser menu and choose “Install app” or “Add to Home Screen”.');return;}
+ await deferredInstall.prompt(); await deferredInstall.userChoice; deferredInstall=null;
+}
+$('#install-app').onclick=()=>{ $('#download-lion-link-popup').hidden=false; };
+$('#download-lion-link').onclick=async()=>{ $('#download-lion-link-popup').hidden=true; await promptLionLinkInstall(); };
 $('#account-profile').onclick=()=>{renderProfile(me);show('profile');};
 $('#logout').onclick=()=>{if(!confirm('Log out of Lion Link? You will need to sign in again to post, message, or manage your profile.'))return;localStorage.removeItem('lionLinkToken');token=null;me=null;$('#login-overlay').classList.remove('hidden');toast('You have been logged out.');};
 $('#share-app').onclick=async()=>{const link=location.href;try{if(navigator.share)await navigator.share({title:'Lion Link',text:'Join Lion Link — your campus, connected.',url:link});else{await navigator.clipboard.writeText(link);toast('Lion Link link copied — send it to your friends!')}}catch{}};
@@ -787,4 +791,55 @@ renderPosts = function() {
     try { return await feedLoad(); }
     finally { loadingOverlay.classList.remove('show'); }
   };
+})();
+
+// Message action and attachment reliability layer.
+(() => {
+  const decorateMessages = () => {
+    if (!activeChat || !me) return;
+    document.querySelectorAll('.x-message.mine').forEach((row, index) => {
+      const message = activeChat.messages?.filter(item => String(item.sender?._id || item.sender) === String(me.id))[index];
+      if (!message || message.pending || row.querySelector('.message-actions')) return;
+      const actions = document.createElement('span');
+      actions.className = 'message-actions';
+      const editable = message.createdAt && Date.now() - new Date(message.createdAt).getTime() <= 15 * 60 * 1000;
+      actions.innerHTML = `${editable ? `<button type="button" data-message-edit="${message._id}">Edit</button>` : ''}<button type="button" data-message-delete="${message._id}">Delete</button>`;
+      row.querySelector('.x-message-content, div:last-child')?.append(actions);
+    });
+  };
+  new MutationObserver(decorateMessages).observe(document.body, { childList: true, subtree: true });
+  document.addEventListener('click', async event => {
+    const edit = event.target.closest('[data-message-edit]');
+    const remove = event.target.closest('[data-message-delete]');
+    if (!edit && !remove) return;
+    event.preventDefault(); event.stopImmediatePropagation();
+    if (!activeChat) return;
+    const messageId = (edit || remove).dataset.messageEdit || (edit || remove).dataset.messageDelete;
+    try {
+      if (edit) {
+        const message = activeChat.messages.find(item => item._id === messageId);
+        const text = prompt('Edit message', message?.text || '');
+        if (text === null) return;
+        await api(`/conversations/${activeChat._id}/messages/${messageId}`, { method: 'PATCH', body: JSON.stringify({ text }), showLoading: true });
+      } else {
+        if (!confirm('Delete this message?')) return;
+        await api(`/conversations/${activeChat._id}/messages/${messageId}`, { method: 'DELETE', showLoading: true });
+      }
+      const chatId = activeChat._id;
+      await loadChats();
+      await openChat(chatId);
+    } catch (error) { toast(error.message); }
+  }, true);
+  document.addEventListener('change', event => {
+    if (event.target.id !== 'x-media-input' || !event.target.files[0]) return;
+    const file = event.target.files[0];
+    setTimeout(() => {
+      const old = document.querySelector('.message-media-ready');
+      if (old) old.remove();
+      const notice = document.createElement('div');
+      notice.className = 'message-media-ready';
+      notice.textContent = `${file.name} is ready to send.`;
+      document.querySelector('#x-compose')?.before(notice);
+    }, 0);
+  }, true);
 })();

@@ -6,6 +6,7 @@ const messageSchema = new mongoose.Schema({
   media: { url: String, type: { type: String, enum: ["image", "video", "audio"] } },
   deliveredAt: { type: Date, default: Date.now },
   readAt: { type: Date, default: null },
+  editedAt: { type: Date, default: null },
   createdAt: { type: Date, default: Date.now }
 }, { _id: true });
 

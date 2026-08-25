@@ -2503,3 +2503,8 @@ body.dark .profile-cover { background-image:var(--profile-cover-image, none); ba
 body.dark .x-compose textarea { background:#000; color:#fff; }
 @media (max-width:700px) { .x-compose { grid-template-columns:32px 34px minmax(0,1fr) auto; gap:4px; } .x-compose .small-post { padding:0 10px; } .x-compose textarea { padding:9px 11px; } }
 .gallery-1,.gallery-2 { max-height:560px; }.gallery-1 .gallery-item,.gallery-2 .gallery-item { min-height:250px; }
+
+/* Message controls and attachment confirmation. */
+.message-actions { display:flex; justify-content:flex-end; gap:8px; margin-top:5px; }
+.message-actions button { border:0; padding:0; background:transparent; color:var(--gold-dark); cursor:pointer; font:600 11px "DM Sans"; }
+.message-media-ready { margin:0 14px 6px; padding:7px 10px; border-radius:8px; background:var(--cream); color:var(--gold-dark); font-size:12px; }
