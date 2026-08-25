@@ -2508,3 +2508,11 @@ body.dark .x-compose textarea { background:#000; color:#fff; }
 .message-actions { display:flex; justify-content:flex-end; gap:8px; margin-top:5px; }
 .message-actions button { border:0; padding:0; background:transparent; color:var(--gold-dark); cursor:pointer; font:600 11px "DM Sans"; }
 .message-media-ready { margin:0 14px 6px; padding:7px 10px; border-radius:8px; background:var(--cream); color:var(--gold-dark); font-size:12px; }
+/* Keep the DM composer above mobile navigation and make message media interactive. */
+.x-message-media img,.x-message-media video { cursor:zoom-in; }
+@media (max-width:700px) {
+  .x-chat { padding-bottom:72px; }
+  .x-compose { position:sticky; bottom:72px; z-index:6; background:var(--paper); box-shadow:0 -5px 14px rgba(0,0,0,.08); }
+  .x-message-stream { padding-bottom:22px; }
+  body.dark .x-compose { background:#000; }
+}

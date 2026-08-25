@@ -843,3 +843,23 @@ renderPosts = function() {
     }, 0);
   }, true);
 })();
+// Keep DM alerts separate from general notifications and open sent media in the viewer.
+(() => {
+  const refreshMessageBadge = () => {
+    const badge = document.querySelector('#message-count');
+    if (!badge || !Array.isArray(conversations) || !me) return;
+    const total = conversations.reduce((count, conversation) => count + (conversation.messages || []).filter(message => String(message.sender?._id || message.sender) !== String(me.id) && !message.readAt).length, 0);
+    badge.hidden = !total; badge.textContent = total > 99 ? '99+' : total;
+  };
+  const notificationsWithoutOverwritingMessages = loadNotifications;
+  loadNotifications = async function() { try { return await notificationsWithoutOverwritingMessages(); } finally { refreshMessageBadge(); } };
+  document.addEventListener('click', event => {
+    const media = event.target.closest('.x-message-media img,.x-message-media video');
+    if (!media) return;
+    event.preventDefault(); event.stopPropagation();
+    const visual = media.tagName === 'VIDEO' ? `<video controls autoplay src="${media.currentSrc || media.src}"></video>` : `<img src="${media.currentSrc || media.src}" alt="Message attachment">`;
+    $('#media-modal-content').innerHTML = `<div class="modal-media">${visual}</div>`;
+    $('#media-modal').hidden = false;
+  }, true);
+  setInterval(refreshMessageBadge, 1000);
+})();
