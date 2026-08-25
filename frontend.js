@@ -71,12 +71,20 @@ async function uploadStory(file){if(!file)return;try{await api('/stories',{metho
 $('#profile-story-upload')?.addEventListener('change',e=>uploadStory(e.target.files[0]));
 document.addEventListener('click',async event=>{const d=event.target.dataset;if(d.removeMedia!==undefined){selectedMedia.splice(+d.removeMedia,1);event.target.closest('div').remove();}if(d.menu){const menu=$('#menu-'+d.menu);menu.hidden=!menu.hidden;}if(d.commentLike){const [postId,commentId]=d.commentLike.split(':');try{await api(`/posts/${postId}/comments/${commentId}/like`,{method:'POST'});await loadPosts({silent:true});const box=$('#comments-'+postId);if(box)box.hidden=false;}catch(error){toast(error.message)}}if(d.replyTo){const [postId,commentId]=d.replyTo.split(':');const form=document.querySelector(`[data-comment-form="${postId}"]`);if(form){form.dataset.replyTo=commentId;form.elements[0].placeholder='Write a reply…';form.elements[0].focus();}}if(d.share){const post=posts.find(p=>p._id===d.share),text=`${post.author?.name||'Lion Link user'} on Lion Link: ${post.text||''}`;try{if(navigator.share)await navigator.share({title:'Lion Link',text,url:location.href+'#post-'+post._id});else{await navigator.clipboard.writeText(text+' '+location.href);toast('Post text and Lion Link link copied.')}}catch{}}});
 let reelVideos=[], reelIndex=0;
+// Comment author photos and names always open that member's profile.
+document.addEventListener('click', event => {
+ const profileLink=event.target.closest('.comment [data-profile]');
+ if(!profileLink?.dataset.profile)return;
+ event.preventDefault();
+ event.stopImmediatePropagation();
+ openProfile(profileLink.dataset.profile);
+}, true);
 // Comment/reply owner controls. Edit expires after fifteen minutes; deletion remains available.
 document.addEventListener('click', async event => {
  const d=event.target.dataset;
  if(d.commentMenu){const [postId,commentId]=d.commentMenu.split(':');const menu=$(`#comment-menu-${postId}-${commentId}`);if(menu)menu.hidden=!menu.hidden;}
- if(d.editComment){const [postId,commentId]=d.editComment.split(':'),comment=posts.find(post=>post._id===postId)?.comments.find(item=>item._id===commentId);const text=prompt('Edit comment',comment?.text||'');if(text!==null)try{await api(`/posts/${postId}/comments/${commentId}`,{method:'PATCH',body:JSON.stringify({text})});await loadPosts();const box=$('#comments-'+postId);if(box)box.hidden=false;}catch(error){toast(error.message)}}
- if(d.deleteComment){const [postId,commentId]=d.deleteComment.split(':');if(confirm('Delete this comment?'))try{await api(`/posts/${postId}/comments/${commentId}`,{method:'DELETE'});await loadPosts();const box=$('#comments-'+postId);if(box)box.hidden=false;}catch(error){toast(error.message)}}
+ if(d.editComment){const [postId,commentId]=d.editComment.split(':'),comment=posts.find(post=>post._id===postId)?.comments.find(item=>item._id===commentId);const text=prompt('Edit comment',comment?.text||'');if(text!==null)try{await api(`/posts/${postId}/comments/${commentId}`,{method:'PATCH',body:JSON.stringify({text})});await loadPosts({silent:true});const box=$('#comments-'+postId);if(box)box.hidden=false;}catch(error){toast(error.message)}}
+ if(d.deleteComment){const [postId,commentId]=d.deleteComment.split(':');if(confirm('Delete this comment?'))try{await api(`/posts/${postId}/comments/${commentId}`,{method:'DELETE'});await loadPosts({silent:true});const box=$('#comments-'+postId);if(box)box.hidden=false;}catch(error){toast(error.message)}}
 });
 function openReel(url){reelVideos=posts.flatMap(post=>(post.media||[]).filter(media=>media.type==='video').map(media=>({...media,post})));reelIndex=Math.max(0,reelVideos.findIndex(video=>video.url===url));renderReel();$('#reels-modal').hidden=false;}
 function renderReel(){const reel=reelVideos[reelIndex];if(!reel)return;$('#reels-content').innerHTML=`<video controls autoplay src="${reel.url}"></video><p>${esc(reel.post.author?.name||'Lion Link user')} · ${esc(reel.post.text||'')}</p><small>${reelIndex+1} of ${reelVideos.length}</small>`;}
