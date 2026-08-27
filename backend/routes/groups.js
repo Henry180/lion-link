@@ -3,7 +3,9 @@ const Group = require("../models/Group");
 const User = require("../models/User");
 const auth = require("../middleware/auth");
 
-const populate = query => query.populate("owner", "name username profileImage").populate("members", "name username profileImage").populate("messages.sender", "name username profileImage");
+// Roles travel with every group author/member so verified admin badges can be
+// rendered anywhere a group message or member is shown.
+const populate = query => query.populate("owner", "name username profileImage role").populate("members", "name username profileImage role").populate("messages.sender", "name username profileImage role");
 const present = (group, userId) => {
   const item = group.toObject ? group.toObject() : group;
   item.memberCount = item.members?.length || 0;
@@ -74,6 +76,17 @@ router.post("/:id/messages", auth, async (req, res) => {
   if (!text) return res.status(400).json({ message: "Message cannot be empty" });
   group.messages.push({ sender: req.user.userId, text }); await group.save(); await group.populate("messages.sender", "name username profileImage");
   res.status(201).json({ message: group.messages.at(-1) });
+});
+
+router.post("/:id/messages/:messageId/react", auth, async (req, res) => {
+  const group = await Group.findById(req.params.id);
+  if (!group) return res.status(404).json({ message: "Group not found" });
+  if (!group.members.some(member => String(member) === String(req.user.userId))) return res.status(403).json({ message: "Join this group before reacting" });
+  const message = group.messages.id(req.params.messageId);
+  if (!message) return res.status(404).json({ message: "Message not found" });
+  const existing = message.reactions.some(user => String(user) === String(req.user.userId));
+  message.reactions = existing ? message.reactions.filter(user => String(user) !== String(req.user.userId)) : [...message.reactions, req.user.userId];
+  await group.save(); res.json({ reacted: !existing, reactions: message.reactions.length });
 });
 
 router.post("/:id/leave", auth, async (req, res) => {

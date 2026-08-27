@@ -4,7 +4,7 @@ const User = require("../models/User");
 const Notification = require("../models/Notification");
 const auth = require("../middleware/auth");
 
-const conversationFor = query => query.populate("members", "name username profileImage role").sort({ updatedAt: -1 });
+const conversationFor = query => query.populate("members", "name username profileImage role lastActiveAt").sort({ updatedAt: -1 });
 
 router.get("/", auth, async (req, res) => {
   const conversations = await conversationFor(Conversation.find({ members: req.user.userId }));
@@ -17,7 +17,7 @@ router.post("/", auth, async (req, res) => {
   let conversation = await Conversation.findOne({ members: { $all: [req.user.userId, other._id], $size: 2 } });
   const created = !conversation;
   if (!conversation) conversation = await Conversation.create({ members: [req.user.userId, other._id] });
-  await conversation.populate("members", "name username profileImage role");
+  await conversation.populate("members", "name username profileImage role lastActiveAt");
   res.status(created ? 201 : 200).json({ conversation });
 });
 
@@ -46,6 +46,16 @@ router.post("/:id/messages", auth, async (req, res) => {
   const recipient = conversation.members.find(member => String(member) !== String(req.user.userId));
   if (recipient) await Notification.create({ recipient, actor: req.user.userId, type: "message", conversation: conversation._id });
   res.status(201).json({ message: conversation.messages.at(-1) });
+});
+
+router.post("/:id/messages/:messageId/react", auth, async (req, res) => {
+  const conversation = await Conversation.findOne({ _id: req.params.id, members: req.user.userId });
+  if (!conversation) return res.status(404).json({ message: "Conversation not found" });
+  const message = conversation.messages.id(req.params.messageId);
+  if (!message) return res.status(404).json({ message: "Message not found" });
+  const existing = message.reactions.some(user => String(user) === String(req.user.userId));
+  message.reactions = existing ? message.reactions.filter(user => String(user) !== String(req.user.userId)) : [...message.reactions, req.user.userId];
+  await conversation.save(); res.json({ reacted: !existing, reactions: message.reactions.length });
 });
 router.patch("/:id/messages/:messageId", auth, async (req, res) => {
   const conversation = await Conversation.findOne({ _id: req.params.id, members: req.user.userId });

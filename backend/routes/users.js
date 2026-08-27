@@ -3,11 +3,24 @@ const User = require("../models/User");
 const auth = require("../middleware/auth");
 const Notification = require("../models/Notification");
 
-const publicUser = (user, viewerFollowing = null) => ({ id: user._id, name: user.name, username: user.username, role: user.role, bio: user.bio, profileImage: user.profileImage, coverImage: user.coverImage, location: user.location, followers: user.followers?.length || 0, following: user.following?.length || 0, createdAt: user.createdAt, ...(viewerFollowing ? { isFollowing: viewerFollowing.has(String(user._id)) } : {}) });
+const ACTIVE_WINDOW_MS = 2 * 60 * 1000;
+const publicUser = (user, viewerFollowing = null) => {
+  const lastActiveAt = user.lastActiveAt || null;
+  return {
+    id: user._id, name: user.name, username: user.username, role: user.role,
+    bio: user.bio, profileImage: user.profileImage, coverImage: user.coverImage,
+    location: user.location, followers: user.followers?.length || 0,
+    following: user.following?.length || 0, createdAt: user.createdAt, lastActiveAt,
+    // Presence is intentionally short-lived: a previously active account is
+    // never labelled "Active now" after the member leaves the app.
+    isActiveNow: Boolean(lastActiveAt && Date.now() - new Date(lastActiveAt).getTime() < ACTIVE_WINDOW_MS),
+    ...(viewerFollowing ? { isFollowing: viewerFollowing.has(String(user._id)) } : {})
+  };
+};
 
 router.get("/suggestions/all", auth, async (req, res) => {
   const [users, viewer] = await Promise.all([
-    User.find({ _id: { $ne: req.user.userId } }).select("name username role bio profileImage followers following createdAt").sort({ createdAt: -1 }),
+    User.find({ _id: { $ne: req.user.userId } }).select("name username role bio profileImage followers following createdAt lastActiveAt").sort({ createdAt: -1 }),
     User.findById(req.user.userId).select("following")
   ]);
   const viewerFollowing = new Set((viewer?.following || []).map(String));
@@ -18,7 +31,7 @@ router.get("/search/:query", auth, async (req, res) => {
   const query = String(req.params.query || "").trim();
   if (!query) return res.json({ users: [] });
   const [users, viewer] = await Promise.all([
-    User.find({ _id: { $ne: req.user.userId }, $or: [{ name: new RegExp(query, "i") }, { username: new RegExp(query.replace(/^@/, ""), "i") }] }).select("name username role bio profileImage followers following createdAt").limit(20),
+    User.find({ _id: { $ne: req.user.userId }, $or: [{ name: new RegExp(query, "i") }, { username: new RegExp(query.replace(/^@/, ""), "i") }] }).select("name username role bio profileImage followers following createdAt lastActiveAt").limit(20),
     User.findById(req.user.userId).select("following")
   ]);
   const viewerFollowing = new Set((viewer?.following || []).map(String));
@@ -39,7 +52,7 @@ router.get("/:username/following", auth, followersList);
 router.get("/:username", auth, async (req, res) => {
   const username = String(req.params.username).toLowerCase().replace(/^@/, "");
   const [user, viewer] = await Promise.all([
-    User.findOne({ username }).select("name username role bio profileImage coverImage location followers following createdAt"),
+    User.findOne({ username }).select("name username role bio profileImage coverImage location followers following createdAt lastActiveAt"),
     User.findById(req.user.userId).select("following")
   ]);
   if (!user) return res.status(404).json({ message: "User not found" });
