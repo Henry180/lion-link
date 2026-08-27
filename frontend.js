@@ -363,6 +363,44 @@ openChat = function(id) {
 
   loadNotifications = async function() { if (!token) return; try { const {notifications,unread,unreadMessages}=await api('/notifications'); const count=$('#notification-count'); count.textContent=unread; count.hidden=!unread; const mobile=$('.bottom-nav [data-view="notifications"]'); if(mobile) mobile.innerHTML=`<span>♢</span>Notification${unread?`<i class="mobile-notification-count">${unread}</i>`:''}`; $('#notification-list').innerHTML=notifications.map(item=>`<button type="button" class="notification ${item.read?'read':'unread'}" data-notification-id="${item._id}" data-notification-type="${item.type}" data-notification-actor="${esc(item.actor?.username || '')}" data-notification-post="${item.post?._id||item.post||''}" data-notification-conversation="${item.conversation?._id||item.conversation||''}"><div class="avatar avatar-gold">${initials(item.actor?.name)}</div><p><b>${esc(item.actor?.name||'Someone')}</b> ${item.type==='follow'?'started following you':item.type==='like'?'liked your post':item.type==='comment'?'commented on your post':'sent you a message'}<small>${when(item.createdAt)}</small></p></button>`).join('')||'<p class="empty-profile">You have no notifications yet.</p>'; } catch(error){console.warn(error);} };
 })();
+// Account dates, OAuth, groups, and session renewal are kept as a small layer
+// over the existing application rather than replacing its navigation or feed.
+(() => {
+  const formatJoined = date => date ? `◷ Joined ${new Date(date).toLocaleDateString(undefined, { month: 'long', year: 'numeric' })}` : '◷ Joined';
+  const priorProfile = renderProfile;
+  renderProfile = function(user) { priorProfile(user); const joined = $('#profile-joined'); if (joined) joined.textContent = formatJoined(user?.createdAt); };
+
+  let groups = [];
+  const groupMarkup = group => {
+    const image = group.coverImage ? ` style="background-image:url('${group.coverImage}')"` : '';
+    const action = group.isOwner ? `<button class="small-post" data-delete-group="${group._id}">Delete</button>` : group.isMember ? `<button class="small-post" data-leave-group="${group._id}">Leave group</button>` : `<button class="small-post" data-join-group="${group._id}">Join group</button>`;
+    return `<article class="group-card"><div class="group-cover"${image}></div><div><h2>${esc(group.name)}</h2><p>${esc(group.description)}</p><small>${group.memberCount || 0} member${group.memberCount === 1 ? '' : 's'} · Created by ${esc(group.owner?.name || 'Lion Link member')} · ${group.privacy}</small></div>${action}</article>`;
+  };
+  async function loadGroups() { if (!token) return; const data = await api('/groups'); groups = data.groups || []; $('#group-list').innerHTML = groups.map(groupMarkup).join('') || '<p class="empty-profile">No groups yet. Start the first one.</p>'; }
+  const priorShow = show;
+  show = function(view) { priorShow(view); if (view === 'groups') loadGroups().catch(error => toast(error.message)); };
+  $('#open-group-create')?.addEventListener('click', () => $('#group-create-modal').hidden = false);
+  $('#group-create-form')?.addEventListener('submit', async event => { event.preventDefault(); try { const file = $('#group-cover').files[0]; const { group } = await api('/groups', { method: 'POST', body: JSON.stringify({ name: $('#group-name').value, description: $('#group-description').value, privacy: $('#group-privacy').value, coverImage: file ? (await fileData(file)).url : '' }) }); groups.unshift(group); $('#group-create-modal').hidden = true; event.target.reset(); $('#group-list').innerHTML = groups.map(groupMarkup).join(''); toast('Group created.'); } catch (error) { toast(error.message); } });
+  document.addEventListener('click', async event => { const button = event.target.closest('[data-join-group],[data-leave-group],[data-delete-group]'); if (!button) return; const id = button.dataset.joinGroup || button.dataset.leaveGroup || button.dataset.deleteGroup; const endpoint = button.dataset.joinGroup ? 'join' : button.dataset.leaveGroup ? 'leave' : null; if (!endpoint && !confirm('Delete this group permanently?')) return; try { if (endpoint) { const { group } = await api(`/groups/${id}/${endpoint}`, { method: 'POST' }); groups = groups.map(item => item._id === id ? group : item); } else { await api(`/groups/${id}`, { method: 'DELETE' }); groups = groups.filter(item => item._id !== id); } $('#group-list').innerHTML = groups.map(groupMarkup).join('') || '<p class="empty-profile">No groups yet.</p>'; } catch (error) { toast(error.message); } }, true);
+
+  $('#google-auth')?.addEventListener('click', () => { location.assign(`${API_URL}/auth/google`); });
+  const params = new URLSearchParams(location.search);
+  const googleToken = params.get('google_token');
+  if (googleToken) { localStorage.setItem('lionLinkToken', googleToken); token = googleToken; history.replaceState(null, '', location.pathname + location.hash); location.reload(); }
+  if (params.get('google_error')) { history.replaceState(null, '', location.pathname + location.hash); setTimeout(() => toast(`Google sign-in failed: ${params.get('google_error')}`), 0); }
+
+  // A fresh token is issued only while the member is actively using Lion Link;
+  // closing the app or short inactivity therefore never prompts for sign-in.
+  let activityTimer;
+  const refreshSession = async () => { if (!token) return; try { const result = await api('/auth/session', { method: 'POST' }); token = result.token; localStorage.setItem('lionLinkToken', token); } catch (error) { if (error.status === 401) { localStorage.removeItem('lionLinkToken'); token = null; $('#login-overlay').classList.remove('hidden'); } } };
+  const noteActivity = () => { clearTimeout(activityTimer); activityTimer = setTimeout(refreshSession, 1200); };
+  ['click', 'keydown', 'touchstart'].forEach(name => window.addEventListener(name, noteActivity, { passive: true }));
+  setInterval(refreshSession, 15 * 60 * 1000);
+
+  // Ensure comment controls work from profile cards too, even when the click
+  // lands on a nested icon/text node instead of the button itself.
+  document.addEventListener('click', event => { const toggle = event.target.closest('[data-comment-toggle]'); if (!toggle) return; const thread = $('#comments-' + toggle.dataset.commentToggle); if (thread) { event.preventDefault(); thread.hidden = !thread.hidden; } }, true);
+})();
 document.addEventListener('click', event => { if (event.target.closest('[data-close-chat]')) { $('#messages-view').classList.remove('chat-open'); activeChat = null; } });
 
 // Reels use a vertical, touch-friendly stream instead of one video at a time.
@@ -465,11 +503,15 @@ document.addEventListener('submit', async event => {
   if (!text) return;
   replying.add(postId);
   const submit = event.target.querySelector('button'); submit.disabled = true;
+  const post = posts.find(item => item._id === postId);
+  const optimistic = { _id: `pending-${Date.now()}`, author: me, text, replyTo: event.target.dataset.replyTo || null, likes: [], createdAt: new Date().toISOString(), pending: true };
+  if (post) { post.comments = [...(post.comments || []), optimistic]; renderPosts(); }
+  event.target.reset(); delete event.target.dataset.replyTo;
   try {
-    await api(`/posts/${postId}/comments`, { method: 'POST', body: JSON.stringify({ text, replyTo: event.target.dataset.replyTo || null }) });
-    event.target.reset(); delete event.target.dataset.replyTo; await loadPosts({silent:true});
+    const { comment } = await api(`/posts/${postId}/comments`, { method: 'POST', body: JSON.stringify({ text, replyTo: optimistic.replyTo }) });
+    if (post) { const index = post.comments.findIndex(item => item._id === optimistic._id); if (index >= 0) post.comments[index] = { ...comment, author: me, likes: comment.likes || [] }; renderPosts(); }
     const box = $('#comments-' + postId); if (box) box.hidden = false;
-  } catch (error) { toast(error.message); }
+  } catch (error) { if (post) { post.comments = post.comments.filter(item => item._id !== optimistic._id); renderPosts(); } toast(`Comment was not saved: ${error.message}`); }
   finally { replying.delete(postId); submit.disabled = false; }
 }, true);
 

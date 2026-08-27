@@ -11,6 +11,7 @@ const storyRoutes = require("./routes/stories");
 const userRoutes = require("./routes/users");
 const notificationRoutes = require("./routes/notifications");
 const eventRoutes = require("./routes/events");
+const groupRoutes = require("./routes/groups");
 const adminRoutes = require("./routes/admin").router;
 
 const app = express();
@@ -73,6 +74,7 @@ app.use("/api/stories", storyRoutes);
 app.use("/api/users", userRoutes);
 app.use("/api/notifications", notificationRoutes);
 app.use("/api/events", eventRoutes);
+app.use("/api/groups", groupRoutes);
 app.use("/api/admin", adminRoutes);
 
 

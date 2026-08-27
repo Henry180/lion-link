@@ -8,6 +8,10 @@ const crypto = require("crypto");
 
 const router = express.Router();
 
+const issueToken = user => jwt.sign({ userId: user._id, role: user.role }, process.env.JWT_SECRET, { expiresIn: "7d" });
+const usernameFrom = value => String(value || "lion").toLowerCase().replace(/[^a-z0-9_]/g, "").slice(0, 16) || "lion";
+async function uniqueGoogleUsername(name) { const base = usernameFrom(name); let username = base.length >= 3 ? base : `${base}user`; let number = 0; while (await User.exists({ username })) username = `${base.slice(0, 15)}${++number}`; return username; }
+
 
 // =====================================================
 // REGISTER
@@ -71,7 +75,8 @@ async function register(req, res) {
         name: user.name,
         email: user.email,
         username: user.username,
-        role: user.role
+        role: user.role,
+        createdAt: user.createdAt
       }
     });
 
@@ -85,6 +90,33 @@ async function register(req, res) {
 }
 router.post("/register", register);
 router.post("/signup", register);
+
+// Google OAuth is enabled when GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET and APP_URL are configured.
+router.get("/google", (req, res) => {
+  if (!process.env.GOOGLE_CLIENT_ID || !process.env.GOOGLE_CLIENT_SECRET || !process.env.APP_URL) return res.status(503).send("Google sign-in has not been configured yet.");
+  const redirect = `${req.protocol}://${req.get("host")}/api/auth/google/callback`;
+  const url = new URL("https://accounts.google.com/o/oauth2/v2/auth");
+  url.search = new URLSearchParams({ client_id: process.env.GOOGLE_CLIENT_ID, redirect_uri: redirect, response_type: "code", scope: "openid email profile", prompt: "select_account" });
+  res.redirect(url.toString());
+});
+router.get("/google/callback", async (req, res) => {
+  try {
+    const redirect = `${req.protocol}://${req.get("host")}/api/auth/google/callback`;
+    const tokenResponse = await fetch("https://oauth2.googleapis.com/token", { method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" }, body: new URLSearchParams({ code: String(req.query.code || ""), client_id: process.env.GOOGLE_CLIENT_ID, client_secret: process.env.GOOGLE_CLIENT_SECRET, redirect_uri: redirect, grant_type: "authorization_code" }) });
+    const tokenData = await tokenResponse.json(); if (!tokenResponse.ok) throw Error(tokenData.error_description || "Google authentication failed");
+    const profileResponse = await fetch("https://openidconnect.googleapis.com/v1/userinfo", { headers: { Authorization: `Bearer ${tokenData.access_token}` } });
+    const profile = await profileResponse.json(); if (!profileResponse.ok || !profile.email || !profile.sub) throw Error("Google did not return a usable profile");
+    let user = await User.findOne({ $or: [{ googleSubject: profile.sub }, { email: profile.email.toLowerCase() }] });
+    if (!user) user = await User.create({ name: profile.name || profile.email.split("@")[0], email: profile.email.toLowerCase(), username: await uniqueGoogleUsername(profile.email.split("@")[0]), googleSubject: profile.sub, profileImage: profile.picture || "" });
+    else if (!user.googleSubject) { user.googleSubject = profile.sub; if (!user.profileImage && profile.picture) user.profileImage = profile.picture; await user.save(); }
+    res.redirect(`${process.env.APP_URL.replace(/\/$/, "")}/?google_token=${encodeURIComponent(issueToken(user))}`);
+  } catch (error) { res.redirect(`${(process.env.APP_URL || "").replace(/\/$/, "")}/?google_error=${encodeURIComponent(error.message)}`); }
+});
+
+router.post("/session", auth, async (req, res) => {
+  const user = await User.findById(req.user.userId); if (!user) return res.status(404).json({ message: "User not found" });
+  user.lastActiveAt = new Date(); await user.save(); res.json({ token: issueToken(user), lastActiveAt: user.lastActiveAt });
+});
 
 router.get("/me", auth, async (req, res) => {
   const user = await User.findById(req.user.userId).select("name email username role bio profileImage coverImage location followers following createdAt").populate("following", "username");
@@ -100,7 +132,7 @@ router.patch("/me", auth, async (req, res) => {
   if (req.body.profileImage) user.profileImage = req.body.profileImage;
   if (req.body.coverImage) user.coverImage = req.body.coverImage;
   await user.save();
-  res.json({ user: { id:user._id, name:user.name, email:user.email, username:user.username, role:user.role, bio:user.bio, profileImage:user.profileImage, coverImage:user.coverImage, location:user.location } });
+  res.json({ user: { id:user._id, name:user.name, email:user.email, username:user.username, role:user.role, bio:user.bio, profileImage:user.profileImage, coverImage:user.coverImage, location:user.location, createdAt:user.createdAt } });
 });
 
 router.post("/become-admin", auth, async (req, res) => {
@@ -206,7 +238,8 @@ router.post("/login", async (req, res) => {
         role: user.role,
         bio: user.bio,
         profileImage: user.profileImage,
-        coverImage: user.coverImage
+        coverImage: user.coverImage,
+        createdAt: user.createdAt
       }
     });
 

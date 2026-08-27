@@ -35,4 +35,8 @@ const postSchema = new mongoose.Schema(
   }
 );
 
+// The feed is normally read newest-first; this lets MongoDB serve that order
+// directly instead of scanning and sorting the entire collection.
+postSchema.index({ createdAt: -1 });
+
 module.exports = mongoose.model("Post", postSchema);

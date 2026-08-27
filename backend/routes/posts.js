@@ -61,25 +61,10 @@ router.post("/", auth, async (req, res) => {
 router.get("/", async (req, res) => {
   try {
     const posts = await Post.find()
-      .populate("author", "name username profileImage role followers following")
+      .sort({ createdAt: -1 })
+      .populate("author", "name username profileImage role")
       .populate("comments.author", "name username profileImage role")
-      .sort({ createdAt: -1 });
-
-    // A balanced discovery feed: recent activity remains important, established
-    // accounts get a small boost, and every author still has a chance to appear.
-    const activity = await Post.aggregate([{ $group: { _id: "$author", count: { $sum: 1 } } }]);
-    const activityByAuthor = new Map(activity.map(item => [String(item._id), item.count]));
-    posts.sort((a, b) => {
-      const score = post => {
-        const ageHours = Math.max(0, (Date.now() - new Date(post.createdAt)) / 3600000);
-        const recency = Math.max(0, 72 - ageHours) / 72;
-        const followers = post.author?.followers?.length || 0;
-        const following = post.author?.following?.length || 0;
-        const frequency = activityByAuthor.get(String(post.author?._id)) || 0;
-        return recency * 8 + Math.log1p(followers) * 1.1 + Math.log1p(following) * .25 + Math.min(frequency, 12) * .15;
-      };
-      return score(b) - score(a) || new Date(b.createdAt) - new Date(a.createdAt);
-    });
+      .lean();
 
     res.json({
       posts

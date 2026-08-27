@@ -19,9 +19,12 @@ const userSchema = new mongoose.Schema(
 
     password: {
       type: String,
-      required: true,
+      required: false,
       minlength: 6
     },
+
+    googleSubject: { type: String, unique: true, sparse: true },
+    lastActiveAt: { type: Date, default: Date.now },
 
     username: {
       type: String,
