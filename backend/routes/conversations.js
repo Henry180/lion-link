@@ -4,7 +4,7 @@ const User = require("../models/User");
 const Notification = require("../models/Notification");
 const auth = require("../middleware/auth");
 
-const conversationFor = query => query.populate("members", "name username profileImage").sort({ updatedAt: -1 });
+const conversationFor = query => query.populate("members", "name username profileImage role").sort({ updatedAt: -1 });
 
 router.get("/", auth, async (req, res) => {
   const conversations = await conversationFor(Conversation.find({ members: req.user.userId }));
@@ -17,7 +17,7 @@ router.post("/", auth, async (req, res) => {
   let conversation = await Conversation.findOne({ members: { $all: [req.user.userId, other._id], $size: 2 } });
   const created = !conversation;
   if (!conversation) conversation = await Conversation.create({ members: [req.user.userId, other._id] });
-  await conversation.populate("members", "name username profileImage");
+  await conversation.populate("members", "name username profileImage role");
   res.status(created ? 201 : 200).json({ conversation });
 });
 
