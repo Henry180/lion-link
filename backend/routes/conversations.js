@@ -6,9 +6,36 @@ const auth = require("../middleware/auth");
 
 const conversationFor = query => query.populate("members", "name username profileImage role lastActiveAt").sort({ updatedAt: -1 });
 
+// The inbox is polled regularly, so it must never include every historical
+// message (or an attachment's base64 data) for every conversation.
+const inboxItem = conversation => {
+  const item = conversation.toObject ? conversation.toObject() : conversation;
+  const last = item.messages?.at(-1);
+  return {
+    _id: item._id,
+    members: item.members,
+    createdAt: item.createdAt,
+    updatedAt: item.updatedAt,
+    lastMessage: last ? {
+      _id: last._id,
+      sender: last.sender,
+      text: last.text,
+      // A type is enough for the preview; the attachment is fetched only when
+      // its conversation is opened.
+      media: last.media ? { type: last.media.type } : null,
+      createdAt: last.createdAt,
+      readAt: last.readAt
+    } : null
+  };
+};
+
 router.get("/", auth, async (req, res) => {
-  const conversations = await conversationFor(Conversation.find({ members: req.user.userId }));
-  res.json({ conversations });
+  const conversations = await conversationFor(
+    Conversation.find({ members: req.user.userId })
+      .select("members messages createdAt updatedAt")
+      .slice("messages", -1)
+  );
+  res.json({ conversations: conversations.map(inboxItem) });
 });
 
 router.post("/", auth, async (req, res) => {
@@ -18,7 +45,22 @@ router.post("/", auth, async (req, res) => {
   const created = !conversation;
   if (!conversation) conversation = await Conversation.create({ members: [req.user.userId, other._id] });
   await conversation.populate("members", "name username profileImage role lastActiveAt");
-  res.status(created ? 201 : 200).json({ conversation });
+  res.status(created ? 201 : 200).json({ conversation: inboxItem(conversation) });
+});
+
+// Fetch message bodies and attachment URLs only for the conversation the
+// member has chosen to open.  Keeping this separate from the inbox avoids
+// re-sending old media during polling.
+router.get("/:id", auth, async (req, res) => {
+  const requestedLimit = Number.parseInt(req.query.limit, 10);
+  const limit = Number.isFinite(requestedLimit) ? Math.min(Math.max(requestedLimit, 1), 100) : 50;
+  const conversation = await conversationFor(
+    Conversation.findOne({ _id: req.params.id, members: req.user.userId })
+      .select("members messages createdAt updatedAt")
+      .slice("messages", -limit)
+  );
+  if (!conversation) return res.status(404).json({ message: "Conversation not found" });
+  res.json({ conversation });
 });
 
 router.post("/:id/read", auth, async (req, res) => {

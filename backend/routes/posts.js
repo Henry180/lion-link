@@ -60,13 +60,21 @@ router.post("/", auth, async (req, res) => {
 
 router.get("/", async (req, res) => {
   try {
+    // An unbounded feed grows forever and re-sends old media on every reload.
+    // Clients can request a modest page; cap it server-side to protect Render
+    // bandwidth even if a client sends an excessive value.
+    const requestedLimit = Number.parseInt(req.query.limit, 10);
+    const limit = Number.isFinite(requestedLimit) ? Math.min(Math.max(requestedLimit, 1), 50) : 20;
     const posts = await Post.find()
       .sort({ createdAt: -1 })
+      .limit(limit)
       .populate("author", "name username profileImage role")
       .populate("comments.author", "name username profileImage role")
       .lean();
 
-    res.json({
+    // A short browser cache prevents repeat refreshes from immediately
+    // consuming backend egress while keeping the feed reasonably fresh.
+    res.set("Cache-Control", "public, max-age=30, stale-while-revalidate=60").json({
       posts
     });
 
