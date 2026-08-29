@@ -81,7 +81,14 @@ async function register(req, res) {
     });
 
   } catch (error) {
-    console.error("Register error:", error);
+    // The pre-check above improves the normal case, but two simultaneous
+    // registrations can still race to MongoDB's unique index.
+    if (error?.code === 11000) {
+      const field = Object.keys(error.keyPattern || {})[0];
+      const message = field === "username" ? "That username is already taken" : "An account with this email already exists. Please log in instead.";
+      return res.status(409).json({ message });
+    }
+    console.error("Register error:", error?.message || error);
 
     res.status(500).json({
       message: "Server error"

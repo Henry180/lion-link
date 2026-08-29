@@ -44,7 +44,10 @@ app.use(cors({
     return callback(new Error("Origin is not allowed"));
   }
 }));
-app.use(express.json({ limit: "12mb" }));
+// A 512 MB instance cannot safely parse many multi-megabyte JSON uploads at
+// once. Photos are compressed in the browser; keep an explicit upper bound so
+// concurrent uploads fail cleanly instead of exhausting the Node process.
+app.use(express.json({ limit: "3mb" }));
 app.use("/api", (req, res, next) => {
   if (!databaseReady) return res.status(503).json({ message: "Lion Link is reconnecting to its database. Please try again in a moment." });
   next();
@@ -59,6 +62,11 @@ app.get("/", (req, res) => {
   res.json({
     message: "🦁 Lion Link API is running"
   });
+});
+
+// Render can use this endpoint without triggering a MongoDB query.
+app.get("/health", (_req, res) => {
+  res.status(databaseReady ? 200 : 503).json({ status: databaseReady ? "ok" : "database reconnecting" });
 });
 
 
@@ -91,7 +99,12 @@ async function connectDatabase() {
   }
 
   try {
-    await mongoose.connect(mongoUri, { serverSelectionTimeoutMS: 10000 });
+    await mongoose.connect(mongoUri, {
+      serverSelectionTimeoutMS: 10000,
+      maxPoolSize: 10,
+      minPoolSize: 0,
+      maxIdleTimeMS: 30000
+    });
     databaseReady = true;
     console.log("✅ MongoDB connected successfully");
   } catch (error) {
@@ -105,4 +118,19 @@ async function connectDatabase() {
 app.listen(process.env.PORT || 5000, () => {
   console.log(`🦁 Lion Link backend running on http://localhost:${process.env.PORT || 5000}`);
   connectDatabase();
+});
+
+// Keep the actual reason in Render logs if the process is ever restarted.
+process.on("unhandledRejection", error => console.error("Unhandled promise rejection:", error));
+process.on("uncaughtException", error => {
+  console.error("Uncaught exception:", error);
+  process.exit(1);
+});
+
+app.use((error, _req, res, _next) => {
+  if (error?.type === "entity.too.large" || error?.status === 413) {
+    return res.status(413).json({ message: "That upload is too large. Please choose a smaller image or video." });
+  }
+  console.error("Unhandled request error:", error);
+  res.status(error?.status || 500).json({ message: "Server error" });
 });

@@ -20,7 +20,7 @@ const publicUser = (user, viewerFollowing = null) => {
 
 router.get("/suggestions/all", auth, async (req, res) => {
   const [users, viewer] = await Promise.all([
-    User.find({ _id: { $ne: req.user.userId } }).select("name username role bio profileImage followers following createdAt lastActiveAt").sort({ createdAt: -1 }),
+    User.find({ _id: { $ne: req.user.userId } }).select("name username role bio profileImage followers following createdAt lastActiveAt").sort({ createdAt: -1 }).limit(30),
     User.findById(req.user.userId).select("following")
   ]);
   const viewerFollowing = new Set((viewer?.following || []).map(String));

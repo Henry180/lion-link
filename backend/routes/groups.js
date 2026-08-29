@@ -16,7 +16,7 @@ const present = (group, userId) => {
 
 router.get("/", auth, async (req, res) => {
   const visibility = req.user.role === "admin" ? {} : { $or: [{ approved: true }, { approved: { $exists: false } }, { owner: req.user.userId }, { members: req.user.userId }] };
-  const groups = await populate(Group.find(visibility).sort({ createdAt: -1 }));
+  const groups = await populate(Group.find(visibility).sort({ createdAt: -1 }).limit(50));
   res.json({ groups: groups.map(group => present(group, req.user.userId)) });
 });
 

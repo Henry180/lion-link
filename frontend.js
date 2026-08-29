@@ -32,7 +32,8 @@ async function loadChats(){conversations=(await api('/conversations')).conversat
 function openChat(id){activeChat=conversations.find(c=>c._id===id);if(!activeChat)return;const other=activeChat.members.find(x=>(x._id||x.id)!==me.id)||me;const messageMarkup=m=>{const mine=(m.sender?._id||m.sender)===me.id,media=m.media?.url?`<div class="message-media">${m.media.type==='video'?`<video controls src="${m.media.url}"></video>`:`<img src="${m.media.url}" alt="Message attachment">`}</div>`:'';return `<div class="message-row ${mine?'mine':''}"><div class="bubble">${media}${m.text?`<div class="message-text">${esc(m.text)}</div>`:''}</div></div>`};$('#chat-empty').hidden=true;$('#active-chat').hidden=false;$('#active-chat').innerHTML=`<header class="chat-header"><div class="avatar avatar-gold">${initials(other.name)}</div><div><strong>${esc(other.name)}</strong><small>@${esc(other.username)}</small></div></header><div class="messages" id="messages">${activeChat.messages.map(messageMarkup).join('')}</div><form class="chat-compose" id="chat-form"><input maxlength="300" placeholder="Write a message…"><label class="chat-media-picker" title="Attach image or video">📎<input id="chat-media-input" type="file" accept="image/*,video/*" hidden></label><button class="chat-send" type="submit" aria-label="Send message">➤</button></form>`;let chatMedia=null;$('#chat-media-input').onchange=async e=>{const file=e.target.files[0];if(!file)return;if(file.size>5*1024*1024){e.target.value='';return toast('Attachments must be 5 MB or smaller.')}try{chatMedia=await fileData(file);toast('Attachment ready to send.')}catch{toast('That attachment could not be read.')}};$('#chat-form').onsubmit=async e=>{e.preventDefault();const text=e.target.elements[0].value.trim();if(!text&&!chatMedia)return;try{await api(`/conversations/${id}/messages`,{method:'POST',body:JSON.stringify({text,media:chatMedia})});await loadChats();openChat(id)}catch(error){toast(error.message)}};}
 function loginMode(){const signup=$('#login-mode').value==='signup';$('#login-name-field').hidden=!signup;$('#login-username-field').hidden=!signup;$('#login-email').placeholder=signup?'your@email.com':'email or username';}
 $('#login-mode').onchange=loginMode;
-$('#login-form').onsubmit=async event=>{event.preventDefault();try{const signup=$('#login-mode').value==='signup';const payload=signup?{name:$('#login-name').value.trim(),username:$('#login-username').value.trim(),email:$('#login-email').value.trim(),password:$('#login-password').value}:{identity:$('#login-email').value.trim(),password:$('#login-password').value};const result=await api(`/auth/${signup?'signup':'login'}`,{method:'POST',body:JSON.stringify(payload)});token=result.token;localStorage.setItem('lionLinkToken',token);me={...result.user,id:result.user.id||result.user._id};$('#login-overlay').classList.add('hidden');identity();await Promise.all([loadPosts(),loadAnnouncements(),loadChats()]);toast(signup?'Account created — welcome!':'Welcome back!');}catch(error){toast(error.message)}};
+let authSubmitting=false;
+$('#login-form').onsubmit=async event=>{event.preventDefault();if(authSubmitting)return;authSubmitting=true;const submit=event.target.querySelector('[type="submit"]');submit.disabled=true;try{const signup=$('#login-mode').value==='signup';const payload=signup?{name:$('#login-name').value.trim(),username:$('#login-username').value.trim(),email:$('#login-email').value.trim(),password:$('#login-password').value}:{identity:$('#login-email').value.trim(),password:$('#login-password').value};const result=await api(`/auth/${signup?'signup':'login'}`,{method:'POST',body:JSON.stringify(payload)});token=result.token;localStorage.setItem('lionLinkToken',token);me={...result.user,id:result.user.id||result.user._id};$('#login-overlay').classList.add('hidden');identity();await Promise.all([loadPosts(),loadAnnouncements(),loadChats()]);toast(signup?'Account created — welcome!':'Welcome back!');}catch(error){toast(error.message)}finally{authSubmitting=false;submit.disabled=false;}};
 async function fileData(file){
   // Resize photographs before storing them. This reduces the size of future
   // API responses while retaining the existing media-upload behaviour.
@@ -478,9 +479,9 @@ window.addEventListener('click', event => {
 
   // A fresh token is issued only while the member is actively using Lion Link;
   // closing the app or short inactivity therefore never prompts for sign-in.
-  let activityTimer;
-  const refreshSession = async () => { if (!token) return; try { const result = await api('/auth/session', { method: 'POST' }); token = result.token; localStorage.setItem('lionLinkToken', token); } catch (error) { if (error.status === 401) { localStorage.removeItem('lionLinkToken'); token = null; $('#login-overlay').classList.remove('hidden'); } } };
-  const noteActivity = () => { clearTimeout(activityTimer); activityTimer = setTimeout(refreshSession, 1200); };
+  let activityTimer, lastSessionRefreshAt = 0;
+  const refreshSession = async () => { if (!token || Date.now() - lastSessionRefreshAt < 60000) return; lastSessionRefreshAt = Date.now(); try { const result = await api('/auth/session', { method: 'POST' }); token = result.token; localStorage.setItem('lionLinkToken', token); } catch (error) { if (error.status === 401) { localStorage.removeItem('lionLinkToken'); token = null; $('#login-overlay').classList.remove('hidden'); } } };
+  const noteActivity = () => { if (Date.now() - lastSessionRefreshAt < 60000) return; clearTimeout(activityTimer); activityTimer = setTimeout(refreshSession, 1200); };
   ['click', 'keydown', 'touchstart'].forEach(name => window.addEventListener(name, noteActivity, { passive: true }));
   // A visible app sends a lightweight heartbeat; hidden/closed tabs naturally
   // age out of the two-minute presence window.
@@ -691,7 +692,7 @@ document.addEventListener('click', event => {
 });
 
 // Refresh activity badges while the app is open, and surface comment context.
-setInterval(() => { if (token) loadNotifications(); }, 30000);
+setInterval(() => { if (token && document.visibilityState === 'visible') loadNotifications(); }, 60000);
 document.addEventListener('click', async event => {
   const item = event.target.closest('[data-notification-type]');
   if (!item?.dataset.notificationPost) return;
