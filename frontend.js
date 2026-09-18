@@ -731,6 +731,29 @@ inviteButton.onclick = async () => {
 const identityWithAdminInvite = identity;
 identity = function() { identityWithAdminInvite(); inviteButton.hidden = me?.role !== 'admin'; };
 
+// One-time comment-count fix, run from here instead of Render's Shell
+// (Shell needs a paid plan). Safe to click more than once if ever unsure
+// whether it ran — it always recalculates from scratch.
+const backfillButton = document.createElement('button');
+backfillButton.className = 'small-post'; backfillButton.id = 'backfill-comment-counts'; backfillButton.textContent = 'Fix comment counts'; backfillButton.hidden = true;
+$('#admin-view').querySelector('.admin-panel')?.append(backfillButton);
+backfillButton.onclick = async () => {
+  backfillButton.disabled = true;
+  const original = backfillButton.textContent;
+  backfillButton.textContent = 'Working…';
+  try {
+    const result = await api('/posts/admin/backfill-comment-counts', { method: 'POST', showLoading: true });
+    toast(result.message);
+  } catch (error) {
+    toast(error.message);
+  } finally {
+    backfillButton.disabled = false;
+    backfillButton.textContent = original;
+  }
+};
+const identityWithBackfillButton = identity;
+identity = function() { identityWithBackfillButton(); backfillButton.hidden = me?.role !== 'admin'; };
+
 // Keep duplicate feed/profile cards independent: the visible card owns its menu.
 document.addEventListener('click', event => {
   const menuButton = event.target.closest('[data-menu]');
