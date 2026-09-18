@@ -66,6 +66,17 @@ router.get("/", async (req, res) => {
     const requestedLimit = Number.parseInt(req.query.limit, 10);
     const limit = Number.isFinite(requestedLimit) ? Math.min(Math.max(requestedLimit, 1), 50) : 20;
     const posts = await Post.find()
+      // reports and impressionUsers are internal bookkeeping — reports in
+      // particular names who reported a post and why, and has no business
+      // being sent to every visitor of the public feed. Excluding both also
+      // trims the payload on every single feed load.
+      .select("-reports -impressionUsers")
+      // Only the first 20 comments (oldest first, matching reading order)
+      // ship with the feed. commentsCount (a real schema field, always
+      // present) still reports the true total regardless of how many
+      // comments actually came along. The frontend fetches further pages
+      // from GET /:id/comments as someone scrolls a long thread.
+      .select({ comments: { $slice: 20 } })
       .sort({ createdAt: -1 })
       .limit(limit)
       .populate("author", "name username profileImage role")
@@ -89,12 +100,23 @@ router.get("/", async (req, res) => {
 
 
 // =====================================================
-// LIKE POST
+// GET A PAGE OF COMMENTS FOR ONE POST
 // =====================================================
 
-router.post("/:id/like", auth, async (req, res) => {
+// Used once a reader scrolls past the comments the feed already shipped.
+// ?skip=20&limit=10 asks for comments 20 through 29 (oldest-first order,
+// matching how the feed's initial page and the thread itself are ordered).
+router.get("/:id/comments", async (req, res) => {
   try {
-    const post = await Post.findById(req.params.id);
+    const requestedLimit = Number.parseInt(req.query.limit, 10);
+    const limit = Number.isFinite(requestedLimit) ? Math.min(Math.max(requestedLimit, 1), 50) : 10;
+    const requestedSkip = Number.parseInt(req.query.skip, 10);
+    const skip = Number.isFinite(requestedSkip) && requestedSkip >= 0 ? requestedSkip : 0;
+
+    const post = await Post.findById(req.params.id)
+      .select({ comments: { $slice: [skip, limit] } })
+      .populate("comments.author", "name username profileImage role")
+      .lean();
 
     if (!post) {
       return res.status(404).json({
@@ -102,17 +124,57 @@ router.post("/:id/like", auth, async (req, res) => {
       });
     }
 
-    const userId = req.user.userId;
-    const existing = post.likes.find(id => id.toString() === userId);
-    post.likes = existing ? post.likes.filter(id => id.toString() !== userId) : [...post.likes, userId];
+    res.json({
+      comments: post.comments || []
+    });
 
-    await post.save();
-    if (!existing && post.author.toString() !== userId) await Notification.create({ recipient: post.author, actor: userId, type: "like", post: post._id });
+  } catch (error) {
+    console.error("Get comments page error:", error);
+
+    res.status(500).json({
+      message: "Server error"
+    });
+  }
+});
+
+
+// =====================================================
+// LIKE POST
+// =====================================================
+
+router.post("/:id/like", auth, async (req, res) => {
+  try {
+    const userId = req.user.userId;
+
+    // Read-modify-write on the whole document let concurrent likes on a
+    // popular post silently overwrite each other (a real lost like), and
+    // forced MongoDB to rewrite every embedded comment on every single
+    // like. $addToSet / $pull apply atomically at the database level, so
+    // concurrent likes can no longer collide, and the write only touches
+    // the likes field rather than resaving the entire post.
+    const current = await Post.findById(req.params.id).select("likes author");
+    if (!current) {
+      return res.status(404).json({
+        message: "Post not found"
+      });
+    }
+
+    const alreadyLiked = current.likes.some(id => id.toString() === userId);
+
+    const updated = await Post.findByIdAndUpdate(
+      req.params.id,
+      alreadyLiked ? { $pull: { likes: userId } } : { $addToSet: { likes: userId } },
+      { new: true }
+    ).select("likes author");
+
+    if (!alreadyLiked && updated.author.toString() !== userId) {
+      await Notification.create({ recipient: updated.author, actor: userId, type: "like", post: updated._id });
+    }
 
     res.json({
       message: "Post liked",
-      likes: post.likes.length,
-      liked: !existing
+      likes: updated.likes.length,
+      liked: !alreadyLiked
     });
 
   } catch (error) {
@@ -168,6 +230,10 @@ router.post("/:id/comments", auth, async (req, res) => {
   if (!text) return res.status(400).json({ message: "Reply cannot be empty" });
   post.comments.push({ author: req.user.userId, text, replyTo: req.body.replyTo || null });
   await post.save();
+  // Kept as a second, separate write rather than folded into the save above:
+  // simple and safe, and a rare one-count drift from a mid-write crash is
+  // harmless for a display counter (the backfill script can always resync it).
+  await Post.updateOne({ _id: post._id }, { $inc: { commentsCount: 1 } });
   if (post.author.toString() !== req.user.userId) await Notification.create({ recipient: post.author, actor: req.user.userId, type: "comment", post: post._id, commentId: post.comments.at(-1)._id.toString() });
   res.status(201).json({ comment: post.comments.at(-1) });
 });
@@ -206,7 +272,9 @@ router.delete("/:id/comments/:commentId", auth, async (req, res) => {
   const comment = post.comments.id(req.params.commentId);
   if (!comment) return res.status(404).json({ message: "Reply not found" });
   if (comment.author.toString() !== req.user.userId) return res.status(403).json({ message: "Not permitted" });
-  comment.deleteOne(); await post.save(); res.status(204).end();
+  comment.deleteOne(); await post.save();
+  await Post.updateOne({ _id: post._id }, { $inc: { commentsCount: -1 } });
+  res.status(204).end();
 });
 
 
