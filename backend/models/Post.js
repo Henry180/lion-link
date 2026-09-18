@@ -71,6 +71,14 @@ router.get("/", async (req, res) => {
       // being sent to every visitor of the public feed. Excluding both also
       // trims the payload on every single feed load.
       .select("-reports -impressionUsers")
+      // Only the most recent 20 comments ship with the feed. A quiet post is
+      // unaffected; a post with thousands of comments during a busy moment
+      // no longer costs 100x more than an ordinary post to load for every
+      // single viewer. Nothing is deleted — this only limits what the feed
+      // response carries. The one visible side effect: the comment-count
+      // button on a post with more than 20 comments will show 20 rather
+      // than the true total, since the frontend counts what it received.
+      .select({ comments: { $slice: -20 } })
       .sort({ createdAt: -1 })
       .limit(limit)
       .populate("author", "name username profileImage role")
