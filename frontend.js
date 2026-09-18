@@ -13,13 +13,26 @@ async function api(path, options={}) { let response;try{response=await fetch(API
 function show(view){if(view==='profile'&&me&&!viewedProfile)renderProfile(me);document.querySelectorAll('.view').forEach(x=>x.classList.toggle('active',x.id===`${view}-view`));document.querySelectorAll('[data-view]').forEach(x=>x.classList.toggle('active',x.dataset.view===view));}
 function identity(){if(!me)return;$('.account strong').textContent=me.name;$('.account small').textContent='@'+me.username;$('.account .avatar').textContent=initials(me.name);$('.composer>.avatar').textContent=initials(me.name);$('[data-view="admin"]').hidden=me.role!=='admin';renderProfile(me);}
 function verifiedBadge(user){return user?.role==='admin'?'<span class="verified" title="Verified Lion Link account" aria-label="Verified Lion Link account"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m7.5 12 3 3 6-7"/></svg></span>':'';}
-function postMarkup(post){const mine=post.author?._id===me?.id||post.author?.id===me?.id;const user=post.author?.username||'';const hasStory=stories.some(s=>s.author?.username===user);const likes=Array.isArray(post.likes)?post.likes:[];const comments=Array.isArray(post.comments)?post.comments:[];const media=post.media||[];const avatar=post.author?.profileImage?`style="background-image:url('${post.author.profileImage}');background-size:cover"`:'';const tiles=media.slice(0,4).map((m,i)=>`<button class="gallery-item" type="button" data-open-media="${post._id}:${i}" aria-label="Open post media ${i+1}">${m.type==='video'?`<video muted preload="metadata" src="${m.url}"></video>`:`<img src="${m.url}" alt="Post media ${i+1}">`}${i===3&&media.length>4?`<span class="media-more">+${media.length-4}</span>`:''}</button>`).join('');const commentMarkup=c=>{const commentLikes=Array.isArray(c.likes)?c.likes:[];const liked=commentLikes.some(id=>(id._id||id).toString()===me?.id);const isMine=(c.author?._id||c.author?.id||c.author)?.toString()===me?.id?.toString();const editable=isMine&&c.createdAt&&Date.now()-new Date(c.createdAt).getTime()<=15*60*1000;return `<div class="comment"><div class="comment-line"><p><b>${esc(c.author?.name||'User')}</b> ${esc(c.text)}</p>${isMine?`<button class="comment-more" data-comment-menu="${post._id}:${c._id}" aria-label="Comment options">•••</button><div class="comment-menu" id="comment-menu-${post._id}-${c._id}" hidden>${editable?`<button data-edit-comment="${post._id}:${c._id}">Edit</button>`:''}<button data-delete-comment="${post._id}:${c._id}">Delete</button></div>`:''}</div><button class="${liked?'liked':''}" data-comment-like="${post._id}:${c._id}">♥ ${commentLikes.length}</button><button data-reply-to="${post._id}:${c._id}">Reply</button></div>`};return `<article class="post" id="post-${post._id}"><button class="avatar avatar-gold ${hasStory?'has-story':''}" data-avatar="${user}" ${avatar}>${post.author?.profileImage?'':initials(post.author?.name)}</button><div class="post-content"><div class="post-meta"><strong class="profile-name" data-profile="${user}">${esc(post.author?.name||'Lion Link User')}</strong><span>@${esc(user)} · ${when(post.createdAt)}</span>${mine?`<button class="action" data-menu="${post._id}">•••</button>`:` <button class="follow-small" data-follow="${user}">Follow</button>`}</div>${post.text?`<p class="post-text">${esc(post.text)}</p>`:''}${media.length?`<div class="post-media gallery gallery-${Math.min(media.length,4)}">${tiles}</div>`:''}<div class="post-actions"><button class="action" data-report-post="${mine?'':post._id}" ${mine?'hidden':''}>⚑ Report</button><button class="action" data-comment-toggle="${post._id}">💬 ${comments.length}</button><button class="action ${likes.some(id=>(id._id||id).toString()===me?.id)?'liked':''}" data-like="${post._id}">♥ ${likes.length}</button><button class="action" data-share="${post._id}">↗ Share</button></div><div class="post-menu" id="menu-${post._id}" hidden><button data-edit-post="${post._id}">Edit</button><button data-delete-post="${post._id}">Delete</button></div><div class="comment-thread" id="comments-${post._id}" hidden>${comments.map(commentMarkup).join('')}<form data-comment-form="${post._id}"><input maxlength="280" required placeholder="Write a reply…"><button>Reply</button></form></div></div></article>`;}
+// Builds one comment's markup outside of postMarkup's closures, so it can
+// also be used to append comments loaded later (see the progressive
+// comment-loading block near the end of this file). Deliberately mirrors
+// the markup postMarkup already produces for a post's initial comments.
+function renderCommentHTML(postId, c) {
+  const author = c.author || {}, username = author.username || '';
+  const commentAvatar = author.profileImage ? `style="background-image:url('${author.profileImage}');background-size:cover"` : '';
+  const commentLikes = Array.isArray(c.likes) ? c.likes : [];
+  const liked = commentLikes.some(id => (id._id || id).toString() === me?.id);
+  const isMine = (author._id || author.id || author)?.toString() === me?.id?.toString();
+  const editable = isMine && c.createdAt && Date.now() - new Date(c.createdAt).getTime() <= 15 * 60 * 1000;
+  return `<div class="comment" id="comment-${c._id}" data-comment-id="${c._id}"><button class="avatar avatar-gold comment-avatar" type="button" data-profile="${esc(username)}" aria-label="Open ${esc(author.name || 'user')} profile" ${commentAvatar}>${author.profileImage ? '' : initials(author.name)}</button><div class="comment-body"><div class="comment-line"><p><button class="comment-author" type="button" data-profile="${esc(username)}">${esc(author.name || 'User')}${verifiedBadge(author)}</button> ${esc(c.text)}</p>${isMine ? `<button class="comment-more" data-comment-menu="${postId}:${c._id}" aria-label="Comment options">•••</button><div class="comment-menu" id="comment-menu-${postId}-${c._id}" hidden>${editable ? `<button data-edit-comment="${postId}:${c._id}">Edit</button>` : ''}<button data-delete-comment="${postId}:${c._id}">Delete</button></div>` : ''}</div><button class="${liked ? 'liked' : ''}" data-comment-like="${postId}:${c._id}">♥ ${commentLikes.length}</button><button data-reply-to="${postId}:${c._id}">Reply</button></div></div>`;
+}
+function postMarkup(post){const mine=post.author?._id===me?.id||post.author?.id===me?.id;const user=post.author?.username||'';const hasStory=stories.some(s=>s.author?.username===user);const likes=Array.isArray(post.likes)?post.likes:[];const comments=Array.isArray(post.comments)?post.comments:[];const media=post.media||[];const avatar=post.author?.profileImage?`style="background-image:url('${post.author.profileImage}');background-size:cover"`:'';const tiles=media.slice(0,4).map((m,i)=>`<button class="gallery-item" type="button" data-open-media="${post._id}:${i}" aria-label="Open post media ${i+1}">${m.type==='video'?`<video muted preload="metadata" src="${m.url}"></video>`:`<img src="${m.url}" alt="Post media ${i+1}">`}${i===3&&media.length>4?`<span class="media-more">+${media.length-4}</span>`:''}</button>`).join('');const commentMarkup=c=>{const commentLikes=Array.isArray(c.likes)?c.likes:[];const liked=commentLikes.some(id=>(id._id||id).toString()===me?.id);const isMine=(c.author?._id||c.author?.id||c.author)?.toString()===me?.id?.toString();const editable=isMine&&c.createdAt&&Date.now()-new Date(c.createdAt).getTime()<=15*60*1000;return `<div class="comment"><div class="comment-line"><p><b>${esc(c.author?.name||'User')}</b> ${esc(c.text)}</p>${isMine?`<button class="comment-more" data-comment-menu="${post._id}:${c._id}" aria-label="Comment options">•••</button><div class="comment-menu" id="comment-menu-${post._id}-${c._id}" hidden>${editable?`<button data-edit-comment="${post._id}:${c._id}">Edit</button>`:''}<button data-delete-comment="${post._id}:${c._id}">Delete</button></div>`:''}</div><button class="${liked?'liked':''}" data-comment-like="${post._id}:${c._id}">♥ ${commentLikes.length}</button><button data-reply-to="${post._id}:${c._id}">Reply</button></div>`};return `<article class="post" id="post-${post._id}"><button class="avatar avatar-gold ${hasStory?'has-story':''}" data-avatar="${user}" ${avatar}>${post.author?.profileImage?'':initials(post.author?.name)}</button><div class="post-content"><div class="post-meta"><strong class="profile-name" data-profile="${user}">${esc(post.author?.name||'Lion Link User')}</strong><span>@${esc(user)} · ${when(post.createdAt)}</span>${mine?`<button class="action" data-menu="${post._id}">•••</button>`:` <button class="follow-small" data-follow="${user}">Follow</button>`}</div>${post.text?`<p class="post-text">${esc(post.text)}</p>`:''}${media.length?`<div class="post-media gallery gallery-${Math.min(media.length,4)}">${tiles}</div>`:''}<div class="post-actions"><button class="action" data-report-post="${mine?'':post._id}" ${mine?'hidden':''}>⚑ Report</button><button class="action" data-comment-toggle="${post._id}" aria-expanded="false">💬 ${post.commentsCount ?? comments.length}</button><button class="action ${likes.some(id=>(id._id||id).toString()===me?.id)?'liked':''}" data-like="${post._id}">♥ ${likes.length}</button><button class="action" data-share="${post._id}">↗ Share</button></div><div class="post-menu" id="menu-${post._id}" hidden><button data-edit-post="${post._id}">Edit</button><button data-delete-post="${post._id}">Delete</button></div><div class="comment-thread" id="comments-${post._id}" hidden>${comments.map(commentMarkup).join('')}<form data-comment-form="${post._id}"><input maxlength="280" required placeholder="Write a reply…"><button>Reply</button></form></div></div></article>`;}
 postMarkup = function(post){
   const mine=post.author?._id===me?.id||post.author?.id===me?.id, user=post.author?.username||'', hasStory=stories.some(s=>s.author?.username===user), likes=Array.isArray(post.likes)?post.likes:[], comments=Array.isArray(post.comments)?post.comments:[], media=post.media||[];
   const avatar=post.author?.profileImage?`style="background-image:url('${post.author.profileImage}');background-size:cover"`:'';
   const tiles=media.slice(0,4).map((m,i)=>`<button class="gallery-item" type="button" data-open-media="${post._id}:${i}" aria-label="Open post media ${i+1}">${m.type==='video'?`<video muted preload="metadata" src="${m.url}"></video>`:`<img src="${m.url}" alt="Post media ${i+1}">`}${i===3&&media.length>4?`<span class="media-more">+${media.length-4}</span>`:''}</button>`).join('');
   const commentMarkup=c=>{const author=c.author||{}, username=author.username||'', commentAvatar=author.profileImage?`style="background-image:url('${author.profileImage}');background-size:cover"`:'';const commentLikes=Array.isArray(c.likes)?c.likes:[],liked=commentLikes.some(id=>(id._id||id).toString()===me?.id),isMine=(author._id||author.id||author)?.toString()===me?.id?.toString(),editable=isMine&&c.createdAt&&Date.now()-new Date(c.createdAt).getTime()<=15*60*1000;return `<div class="comment"><button class="avatar avatar-gold comment-avatar" type="button" data-profile="${esc(username)}" aria-label="Open ${esc(author.name||'user')} profile" ${commentAvatar}>${author.profileImage?'':initials(author.name)}</button><div class="comment-body"><div class="comment-line"><p><button class="comment-author" type="button" data-profile="${esc(username)}">${esc(author.name||'User')}${verifiedBadge(author)}</button> ${esc(c.text)}</p>${isMine?`<button class="comment-more" data-comment-menu="${post._id}:${c._id}" aria-label="Comment options">•••</button><div class="comment-menu" id="comment-menu-${post._id}-${c._id}" hidden>${editable?`<button data-edit-comment="${post._id}:${c._id}">Edit</button>`:''}<button data-delete-comment="${post._id}:${c._id}">Delete</button></div>`:''}</div><button class="${liked?'liked':''}" data-comment-like="${post._id}:${c._id}">♥ ${commentLikes.length}</button><button data-reply-to="${post._id}:${c._id}">Reply</button></div></div>`};
-  return `<article class="post" id="post-${post._id}"><button class="avatar avatar-gold ${hasStory?'has-story':''}" data-avatar="${user}" ${avatar}>${post.author?.profileImage?'':initials(post.author?.name)}</button><div class="post-content"><div class="post-meta"><strong class="profile-name" data-profile="${user}">${esc(post.author?.name||'Lion Link User')}${verifiedBadge(post.author)}</strong><span>@${esc(user)} · ${when(post.createdAt)}</span>${mine?`<button class="action" data-menu="${post._id}">•••</button>`:` <button class="follow-small" data-follow="${user}">Follow</button>`}</div>${post.text?`<p class="post-text">${esc(post.text)}</p>`:''}${media.length?`<div class="post-media gallery gallery-${Math.min(media.length,4)}">${tiles}</div>`:''}<div class="post-actions"><button class="action" data-report-post="${mine?'':post._id}" ${mine?'hidden':''}>⚑ Report</button><button class="action" data-comment-toggle="${post._id}">💬 ${comments.length}</button><button class="action ${likes.some(id=>(id._id||id).toString()===me?.id)?'liked':''}" data-like="${post._id}">♥ ${likes.length}</button><button class="action" data-share="${post._id}">↗ Share</button></div><div class="post-menu" id="menu-${post._id}" hidden><button data-edit-post="${post._id}">Edit</button><button data-delete-post="${post._id}">Delete</button></div><div class="comment-thread" id="comments-${post._id}" hidden>${comments.map(commentMarkup).join('')}<form data-comment-form="${post._id}"><input maxlength="280" required placeholder="Write a reply…"><button>Reply</button></form></div></div></article>`;
+  return `<article class="post" id="post-${post._id}"><button class="avatar avatar-gold ${hasStory?'has-story':''}" data-avatar="${user}" ${avatar}>${post.author?.profileImage?'':initials(post.author?.name)}</button><div class="post-content"><div class="post-meta"><strong class="profile-name" data-profile="${user}">${esc(post.author?.name||'Lion Link User')}${verifiedBadge(post.author)}</strong><span>@${esc(user)} · ${when(post.createdAt)}</span>${mine?`<button class="action" data-menu="${post._id}">•••</button>`:` <button class="follow-small" data-follow="${user}">Follow</button>`}</div>${post.text?`<p class="post-text">${esc(post.text)}</p>`:''}${media.length?`<div class="post-media gallery gallery-${Math.min(media.length,4)}">${tiles}</div>`:''}<div class="post-actions"><button class="action" data-report-post="${mine?'':post._id}" ${mine?'hidden':''}>⚑ Report</button><button class="action" data-comment-toggle="${post._id}" aria-expanded="false">💬 ${post.commentsCount ?? comments.length}</button><button class="action ${likes.some(id=>(id._id||id).toString()===me?.id)?'liked':''}" data-like="${post._id}">♥ ${likes.length}</button><button class="action" data-share="${post._id}">↗ Share</button></div><div class="post-menu" id="menu-${post._id}" hidden><button data-edit-post="${post._id}">Edit</button><button data-delete-post="${post._id}">Delete</button></div><div class="comment-thread" id="comments-${post._id}" hidden>${comments.map(commentMarkup).join('')}<form data-comment-form="${post._id}"><input maxlength="280" required placeholder="Write a reply…"><button>Reply</button></form></div></div></article>`;
 };
 function renderPosts(){const all=posts.map(postMarkup).join('')||'<p class="empty-profile">No posts yet.</p>';$('#post-feed').innerHTML=all;const username=(viewedProfile||me)?.username;$('#profile-posts').innerHTML=posts.filter(p=>p.author?.username===username).map(postMarkup).join('')||'<p class="empty-profile">No posts yet.</p>';}
 async function loadPosts(){posts=(await api('/posts')).posts;renderPosts();}
@@ -1013,4 +1026,62 @@ renderPosts = function() {
     $('#media-modal').hidden = false;
   }, true);
   setInterval(refreshMessageBadge, 1000);
+})();
+
+// Progressive comment loading. The feed ships each post's first 20 comments
+// (oldest first); scrolling to the bottom of an open thread quietly loads
+// 10 more at a time — in that same order — until every comment for that
+// post has been loaded. commentsCount (sent with every post) is the source
+// of truth for the true total, so the count badge is always accurate even
+// though only a portion of the thread may be loaded at any moment.
+(() => {
+  const loadedCounts = new Map();   // postId -> comments currently in the DOM
+  const totalCounts = new Map();    // postId -> true total, from commentsCount
+  const inFlight = new Set();       // postIds currently mid-fetch
+
+  // Recompute both maps whenever the feed re-renders, since post objects
+  // (and their initial comment pages) are replaced wholesale on each load.
+  const afterRenderPosts = renderPosts;
+  renderPosts = function() {
+    afterRenderPosts();
+    posts.forEach(post => {
+      loadedCounts.set(post._id, (post.comments || []).length);
+      totalCounts.set(post._id, post.commentsCount ?? (post.comments || []).length);
+    });
+  };
+
+  async function loadMoreComments(postId) {
+    if (inFlight.has(postId)) return;
+    const loaded = loadedCounts.get(postId) ?? 0;
+    const total = totalCounts.get(postId) ?? 0;
+    if (loaded >= total) return;
+
+    inFlight.add(postId);
+    try {
+      const { comments } = await api(`/posts/${postId}/comments?skip=${loaded}&limit=10`);
+      const thread = document.getElementById(`comments-${postId}`);
+      const form = thread?.querySelector('[data-comment-form]');
+      if (thread && form && comments.length) {
+        comments.forEach(comment => form.insertAdjacentHTML('beforebegin', renderCommentHTML(postId, comment)));
+      }
+      loadedCounts.set(postId, loaded + comments.length);
+    } catch {
+      // Quietly try again on the next scroll tick rather than interrupting
+      // the reader with an error over something as minor as older comments.
+    } finally {
+      inFlight.delete(postId);
+    }
+  }
+
+  // A comment thread is an ordinary block on the page, not its own
+  // scrollable box, so "nearing the bottom of an open thread" is checked
+  // against the whole page's scroll position.
+  document.addEventListener('scroll', () => {
+    document.querySelectorAll('.comment-thread:not([hidden])').forEach(thread => {
+      const rect = thread.getBoundingClientRect();
+      if (rect.bottom < window.innerHeight + 400) {
+        loadMoreComments(thread.id.replace('comments-', ''));
+      }
+    });
+  }, { passive: true });
 })();
