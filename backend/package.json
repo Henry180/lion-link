@@ -7,6 +7,7 @@
     "start": "node server.js",
     "dev": "nodemon server.js",
     "create-admin": "node create-admin.js",
+    "backfill-comments": "node backfill-comments.js",
     "test": "echo \"No automated tests configured\""
   },
   "keywords": [],
