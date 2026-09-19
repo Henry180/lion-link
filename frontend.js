@@ -48,8 +48,8 @@ $('#login-mode').onchange=loginMode;
 let authSubmitting=false;
 $('#login-form').onsubmit=async event=>{event.preventDefault();if(authSubmitting)return;authSubmitting=true;const submit=event.target.querySelector('[type="submit"]');submit.disabled=true;try{const signup=$('#login-mode').value==='signup';const payload=signup?{name:$('#login-name').value.trim(),username:$('#login-username').value.trim(),email:$('#login-email').value.trim(),password:$('#login-password').value}:{identity:$('#login-email').value.trim(),password:$('#login-password').value};const result=await api(`/auth/${signup?'signup':'login'}`,{method:'POST',body:JSON.stringify(payload)});token=result.token;localStorage.setItem('lionLinkToken',token);me={...result.user,id:result.user.id||result.user._id};$('#login-overlay').classList.add('hidden');identity();await Promise.all([loadPosts(),loadAnnouncements(),loadChats()]);toast(signup?'Account created — welcome!':'Welcome back!');}catch(error){toast(error.message)}finally{authSubmitting=false;submit.disabled=false;}};
 async function fileData(file){
-  // Resize photographs before storing them. This reduces the size of future
-  // API responses while retaining the existing media-upload behaviour.
+  // Resize photographs before uploading. This keeps R2 storage and upload
+  // time down while retaining the existing media behaviour.
   let uploadFile=file;
   if(file.type.startsWith('image/')&&file.type!=='image/gif'){
     const source=URL.createObjectURL(file);
@@ -61,7 +61,21 @@ async function fileData(file){
       uploadFile=await new Promise((resolve,reject)=>canvas.toBlob(blob=>blob?resolve(new File([blob],`${file.name.replace(/\.[^.]+$/,'')||'image'}.jpg`,{type:'image/jpeg'})):reject(Error('Could not prepare image')),'image/jpeg',0.82));
     }finally{URL.revokeObjectURL(source);}
   }
-  return new Promise((resolve,reject)=>{const reader=new FileReader();reader.onload=()=>resolve({url:reader.result,type:uploadFile.type.startsWith('video/')?'video':uploadFile.type.startsWith('audio/')?'audio':'image'});reader.onerror=reject;reader.readAsDataURL(uploadFile)});
+  const type = uploadFile.type.startsWith('video/')?'video':uploadFile.type.startsWith('audio/')?'audio':'image';
+  // Ask the backend for a short-lived, one-time upload link, then send the
+  // actual file bytes straight to Cloudflare R2 — never through our own
+  // server, and never stored as text inside the database.
+  const { uploadUrl, publicUrl } = await api('/uploads/presign', {
+    method: 'POST',
+    body: JSON.stringify({ filename: uploadFile.name || 'upload', contentType: uploadFile.type })
+  });
+  const putResponse = await fetch(uploadUrl, {
+    method: 'PUT',
+    headers: { 'Content-Type': uploadFile.type },
+    body: uploadFile
+  });
+  if (!putResponse.ok) throw Error('Upload to storage failed');
+  return { url: publicUrl, type };
 }
 $('#media-picker').onclick=()=>$('#media-input').click();$('#media-input').onchange=async event=>{try{selectedMedia=await Promise.all([...event.target.files].slice(0,8).filter(file=>file.size<5*1024*1024).map(fileData));$('#media-preview').hidden=!selectedMedia.length;$('#media-preview').innerHTML=selectedMedia.map((m,i)=>`<div>${m.type==='video'?`<video src="${m.url}"></video>`:`<img src="${m.url}">`}<button type="button" data-remove-media="${i}">×</button></div>`).join('');if(event.target.files.length>8)toast('Only the first 8 files were selected.')}catch{toast('That media could not be read')}};
 $('#submit-post').onclick=async()=>{const text=$('#post-text').value.trim();if(!text&&!selectedMedia.length)return;try{await api('/posts',{method:'POST',body:JSON.stringify({text,media:selectedMedia})});$('#post-text').value='';selectedMedia=[];$('#media-preview').hidden=true;await loadPosts();toast('Your post is live!')}catch(error){toast(error.message)}};
@@ -849,6 +863,10 @@ renderPosts = function() {
     if (!media || media.type !== 'image') return;
     cropTarget = index;
     crop.image = new Image();
+    // Required once media lives on R2 instead of as same-origin base64:
+    // without this, the browser blocks reading the image back out of the
+    // canvas (a "tainted canvas" security error) when applying a crop.
+    crop.image.crossOrigin = 'anonymous';
     crop.image.onload = () => {
       crop.base = Math.max(stage.clientWidth / crop.image.naturalWidth, stage.clientHeight / crop.image.naturalHeight);
       crop.scale = 1; crop.x = 0; crop.y = 0; cropZoom.value = '1';
