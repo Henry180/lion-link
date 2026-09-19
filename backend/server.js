@@ -13,6 +13,7 @@ const notificationRoutes = require("./routes/notifications");
 const eventRoutes = require("./routes/events");
 const groupRoutes = require("./routes/groups");
 const adminRoutes = require("./routes/admin").router;
+const uploadRoutes = require("./routes/uploads");
 
 const app = express();
 let databaseReady = false;
@@ -84,6 +85,7 @@ app.use("/api/notifications", notificationRoutes);
 app.use("/api/events", eventRoutes);
 app.use("/api/groups", groupRoutes);
 app.use("/api/admin", adminRoutes);
+app.use("/api/uploads", uploadRoutes);
 
 
 // =====================================================
