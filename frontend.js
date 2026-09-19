@@ -47,24 +47,10 @@ function loginMode(){const signup=$('#login-mode').value==='signup';$('#login-na
 $('#login-mode').onchange=loginMode;
 let authSubmitting=false;
 $('#login-form').onsubmit=async event=>{event.preventDefault();if(authSubmitting)return;authSubmitting=true;const submit=event.target.querySelector('[type="submit"]');submit.disabled=true;try{const signup=$('#login-mode').value==='signup';const payload=signup?{name:$('#login-name').value.trim(),username:$('#login-username').value.trim(),email:$('#login-email').value.trim(),password:$('#login-password').value}:{identity:$('#login-email').value.trim(),password:$('#login-password').value};const result=await api(`/auth/${signup?'signup':'login'}`,{method:'POST',body:JSON.stringify(payload)});token=result.token;localStorage.setItem('lionLinkToken',token);me={...result.user,id:result.user.id||result.user._id};$('#login-overlay').classList.add('hidden');identity();await Promise.all([loadPosts(),loadAnnouncements(),loadChats()]);toast(signup?'Account created — welcome!':'Welcome back!');}catch(error){toast(error.message)}finally{authSubmitting=false;submit.disabled=false;}};
-async function fileData(file){
-  // Resize photographs before uploading. This keeps R2 storage and upload
-  // time down while retaining the existing media behaviour.
-  let uploadFile=file;
-  if(file.type.startsWith('image/')&&file.type!=='image/gif'){
-    const source=URL.createObjectURL(file);
-    try{
-      const image=await new Promise((resolve,reject)=>{const node=new Image();node.onload=()=>resolve(node);node.onerror=reject;node.src=source;});
-      const scale=Math.min(1,1600/Math.max(image.naturalWidth,image.naturalHeight));
-      const canvas=document.createElement('canvas');canvas.width=Math.max(1,Math.round(image.naturalWidth*scale));canvas.height=Math.max(1,Math.round(image.naturalHeight*scale));
-      canvas.getContext('2d').drawImage(image,0,0,canvas.width,canvas.height);
-      uploadFile=await new Promise((resolve,reject)=>canvas.toBlob(blob=>blob?resolve(new File([blob],`${file.name.replace(/\.[^.]+$/,'')||'image'}.jpg`,{type:'image/jpeg'})):reject(Error('Could not prepare image')),'image/jpeg',0.82));
-    }finally{URL.revokeObjectURL(source);}
-  }
-  const type = uploadFile.type.startsWith('video/')?'video':uploadFile.type.startsWith('audio/')?'audio':'image';
-  // Ask the backend for a short-lived, one-time upload link, then send the
-  // actual file bytes straight to Cloudflare R2 — never through our own
-  // server, and never stored as text inside the database.
+// Ask the backend for a short-lived, one-time upload link, then send the
+// actual file bytes straight to Cloudflare R2 — never through our own
+// server, and never stored as text inside the database.
+async function uploadToR2(uploadFile){
   const { uploadUrl, publicUrl } = await api('/uploads/presign', {
     method: 'POST',
     body: JSON.stringify({ filename: uploadFile.name || 'upload', contentType: uploadFile.type })
@@ -75,7 +61,34 @@ async function fileData(file){
     body: uploadFile
   });
   if (!putResponse.ok) throw Error('Upload to storage failed');
-  return { url: publicUrl, type };
+  return publicUrl;
+}
+
+async function resizeImageFile(file){
+  if(!(file.type.startsWith('image/')&&file.type!=='image/gif')) return file;
+  const source=URL.createObjectURL(file);
+  try{
+    const image=await new Promise((resolve,reject)=>{const node=new Image();node.onload=()=>resolve(node);node.onerror=reject;node.src=source;});
+    const scale=Math.min(1,1600/Math.max(image.naturalWidth,image.naturalHeight));
+    const canvas=document.createElement('canvas');canvas.width=Math.max(1,Math.round(image.naturalWidth*scale));canvas.height=Math.max(1,Math.round(image.naturalHeight*scale));
+    canvas.getContext('2d').drawImage(image,0,0,canvas.width,canvas.height);
+    return await new Promise((resolve,reject)=>canvas.toBlob(blob=>blob?resolve(new File([blob],`${file.name.replace(/\.[^.]+$/,'')||'image'}.jpg`,{type:'image/jpeg'})):reject(Error('Could not prepare image')),'image/jpeg',0.82));
+  }finally{URL.revokeObjectURL(source);}
+}
+
+// Keeps the pre-upload local copy of each image available to the crop tool,
+// without it ever being sent to the server — a plain WeakMap keyed on the
+// {url,type} object itself, so it adds nothing to what gets JSON.stringify'd
+// when a post, message, or story is actually submitted.
+const cropSources = new WeakMap();
+
+async function fileData(file){
+  const uploadFile = await resizeImageFile(file);
+  const type = uploadFile.type.startsWith('video/')?'video':uploadFile.type.startsWith('audio/')?'audio':'image';
+  const publicUrl = await uploadToR2(uploadFile);
+  const result = { url: publicUrl, type };
+  if (type === 'image') cropSources.set(result, uploadFile);
+  return result;
 }
 $('#media-picker').onclick=()=>$('#media-input').click();$('#media-input').onchange=async event=>{try{selectedMedia=await Promise.all([...event.target.files].slice(0,8).filter(file=>file.size<5*1024*1024).map(fileData));$('#media-preview').hidden=!selectedMedia.length;$('#media-preview').innerHTML=selectedMedia.map((m,i)=>`<div>${m.type==='video'?`<video src="${m.url}"></video>`:`<img src="${m.url}">`}<button type="button" data-remove-media="${i}">×</button></div>`).join('');if(event.target.files.length>8)toast('Only the first 8 files were selected.')}catch{toast('That media could not be read')}};
 $('#submit-post').onclick=async()=>{const text=$('#post-text').value.trim();if(!text&&!selectedMedia.length)return;try{await api('/posts',{method:'POST',body:JSON.stringify({text,media:selectedMedia})});$('#post-text').value='';selectedMedia=[];$('#media-preview').hidden=true;await loadPosts();toast('Your post is live!')}catch(error){toast(error.message)}};
@@ -238,7 +251,7 @@ openStory = function(story) {
   const mine = (story.author?._id || story.author?.id) === me?.id;
   const controls = mine ? `<div class="story-controls"><button data-edit-story="${story._id}">Edit caption</button><button data-delete-story="${story._id}">Delete story</button></div>` : '';
   const viewers = mine ? `<details class="story-viewers"><summary>◉ ${story.viewerCount || story.viewers?.length || 0} views</summary>${(story.viewers || []).map(viewer => `<p>${esc(viewer.name)} <small>@${esc(viewer.username)}</small></p>`).join('') || '<p>No viewers yet.</p>'}</details>` : '';
-  $('#media-modal-content').innerHTML = `${story.media.type === 'video' ? `<div class="modal-media"><video controls autoplay src="${story.media.url}"></video></div>` : `<div class="modal-media"><img src="${story.media.url}" alt="Story"></div>`}<p class="story-caption">${esc(story.caption || '')}</p>${viewers}${controls}`;
+  $('#media-modal-content').innerHTML = `${story.media.type === 'video' ? `<div class="modal-media"><video controls autoplay src="${story.media.url}"></video></div>` : `<div class="modal-media"><img src="${story.media.url}" alt="Story"></div>`}${story.caption ? `<p class="story-caption" style="display:inline-block;background:rgba(0,0,0,.6);color:#fff;padding:7px 14px;border-radius:10px;max-width:90%;">${esc(story.caption)}</p>` : ''}${viewers}${controls}`;
   $('#media-modal').hidden = false;
   if (!mine) api(`/stories/${story._id}/view`, { method: 'POST' }).then(({ viewerCount }) => { story.viewerCount = viewerCount; }).catch(() => {});
 };
@@ -402,7 +415,7 @@ openChat = function(id) {
     const comments = (story.comments || []).map(comment => `<button class="story-comment" data-story-dm="${esc(comment.author?.username || '')}"><b>${esc(comment.author?.name || 'User')}</b> ${esc(comment.text)}</button>`).join('') || '<p class="empty-profile">No comments yet.</p>';
     const controls = mine ? `<div class="story-controls"><button data-edit-story="${story._id}">Edit caption</button><button data-delete-story="${story._id}">Delete story</button></div>` : '';
     const visual = story.media.type === 'video' ? `<video controls autoplay src="${story.media.url}"></video>` : `<img src="${story.media.url}" alt="Story">`;
-    $('#media-modal-content').innerHTML = `<div class="modal-media">${visual}</div><p class="story-caption">${esc(story.caption || '')}</p><div class="story-actions"><button data-story-like="${story._id}" class="${liked ? 'liked' : ''}">♥ ${story.likes?.length || 0}</button><button data-story-comment="${story._id}">💬 ${story.comments?.length || 0}</button></div><div class="story-comments" id="story-comments-${story._id}" hidden>${comments}</div>${controls}${group.length > 1 ? `<div class="reels-actions"><button data-story-step="${story._id}:prev" ${index === 0 ? 'disabled' : ''}>‹ Previous</button><small>${index + 1} of ${group.length}</small><button data-story-step="${story._id}:next" ${index === group.length - 1 ? 'disabled' : ''}>Next ›</button></div>` : ''}`;
+    $('#media-modal-content').innerHTML = `<div class="modal-media">${visual}</div>${story.caption ? `<p class="story-caption" style="display:inline-block;background:rgba(0,0,0,.6);color:#fff;padding:7px 14px;border-radius:10px;max-width:90%;">${esc(story.caption)}</p>` : ''}<div class="story-actions"><button data-story-like="${story._id}" class="${liked ? 'liked' : ''}">♥ ${story.likes?.length || 0}</button><button data-story-comment="${story._id}">💬 ${story.comments?.length || 0}</button></div><div class="story-comments" id="story-comments-${story._id}" hidden>${comments}</div>${controls}${group.length > 1 ? `<div class="reels-actions"><button data-story-step="${story._id}:prev" ${index === 0 ? 'disabled' : ''}>‹ Previous</button><small>${index + 1} of ${group.length}</small><button data-story-step="${story._id}:next" ${index === group.length - 1 ? 'disabled' : ''}>Next ›</button></div>` : ''}`;
     $('#media-modal').hidden = false;
   };
 
@@ -862,17 +875,22 @@ renderPosts = function() {
     const media = selectedMedia[index];
     if (!media || media.type !== 'image') return;
     cropTarget = index;
+    const localFile = cropSources.get(media);
+    // Cropping the local, pre-upload copy avoids ever loading a remote,
+    // cross-origin image into the canvas at all — sidestepping the CORS
+    // requirement entirely rather than working around it. Only falls back
+    // to fetching the R2 copy (with crossOrigin set) if that local
+    // reference is somehow unavailable.
+    const source = localFile ? URL.createObjectURL(localFile) : media.url;
+    crop._objectUrl = localFile ? source : null;
     crop.image = new Image();
-    // Required once media lives on R2 instead of as same-origin base64:
-    // without this, the browser blocks reading the image back out of the
-    // canvas (a "tainted canvas" security error) when applying a crop.
-    crop.image.crossOrigin = 'anonymous';
+    if (!localFile) crop.image.crossOrigin = 'anonymous';
     crop.image.onload = () => {
       crop.base = Math.max(stage.clientWidth / crop.image.naturalWidth, stage.clientHeight / crop.image.naturalHeight);
       crop.scale = 1; crop.x = 0; crop.y = 0; cropZoom.value = '1';
-      cropImage.src = media.url; redrawCrop(); $('#crop-modal').hidden = false;
+      cropImage.src = source; redrawCrop(); $('#crop-modal').hidden = false;
     };
-    crop.image.src = media.url;
+    crop.image.src = source;
   };
 
   const renderSelectedMedia = () => {
@@ -895,17 +913,34 @@ renderPosts = function() {
   stage.addEventListener('pointerdown', event => { crop.drag = { x: event.clientX, y: event.clientY, left: crop.x, top: crop.y }; stage.setPointerCapture(event.pointerId); });
   stage.addEventListener('pointermove', event => { if (!crop.drag) return; crop.x = crop.drag.left + event.clientX - crop.drag.x; crop.y = crop.drag.top + event.clientY - crop.drag.y; redrawCrop(); });
   stage.addEventListener('pointerup', () => { crop.drag = null; });
-  $('#cancel-crop').onclick = () => { $('#crop-modal').hidden = true; };
-  $('#apply-crop').onclick = () => {
+  const releaseCropObjectUrl = () => { if (crop._objectUrl) { URL.revokeObjectURL(crop._objectUrl); crop._objectUrl = null; } };
+  $('#cancel-crop').onclick = () => { $('#crop-modal').hidden = true; releaseCropObjectUrl(); };
+  $('#apply-crop').onclick = async () => {
     if (cropTarget === null || !crop.image) return;
-    const output = document.createElement('canvas'); output.width = output.height = 1080;
-    const size = stage.clientWidth, sourceScale = crop.base * crop.scale;
-    const sourceSize = size / sourceScale;
-    const sx = Math.max(0, Math.min(crop.image.naturalWidth - sourceSize, crop.image.naturalWidth / 2 - sourceSize / 2 - crop.x / sourceScale));
-    const sy = Math.max(0, Math.min(crop.image.naturalHeight - sourceSize, crop.image.naturalHeight / 2 - sourceSize / 2 - crop.y / sourceScale));
-    output.getContext('2d').drawImage(crop.image, sx, sy, sourceSize, sourceSize, 0, 0, 1080, 1080);
-    selectedMedia[cropTarget] = { url: output.toDataURL('image/jpeg', .9), type: 'image' };
-    renderSelectedMedia(); $('#crop-modal').hidden = true;
+    const applyButton = $('#apply-crop');
+    const originalLabel = applyButton.textContent;
+    applyButton.disabled = true; applyButton.textContent = 'Uploading…';
+    try {
+      const output = document.createElement('canvas'); output.width = output.height = 1080;
+      const size = stage.clientWidth, sourceScale = crop.base * crop.scale;
+      const sourceSize = size / sourceScale;
+      const sx = Math.max(0, Math.min(crop.image.naturalWidth - sourceSize, crop.image.naturalWidth / 2 - sourceSize / 2 - crop.x / sourceScale));
+      const sy = Math.max(0, Math.min(crop.image.naturalHeight - sourceSize, crop.image.naturalHeight / 2 - sourceSize / 2 - crop.y / sourceScale));
+      output.getContext('2d').drawImage(crop.image, sx, sy, sourceSize, sourceSize, 0, 0, 1080, 1080);
+      const blob = await new Promise((resolve, reject) => output.toBlob(b => b ? resolve(b) : reject(Error('Could not prepare crop')), 'image/jpeg', 0.9));
+      const croppedFile = new File([blob], 'cropped.jpg', { type: 'image/jpeg' });
+      const publicUrl = await uploadToR2(croppedFile);
+      const newMedia = { url: publicUrl, type: 'image' };
+      cropSources.set(newMedia, croppedFile);
+      selectedMedia[cropTarget] = newMedia;
+      renderSelectedMedia();
+      $('#crop-modal').hidden = true;
+    } catch (error) {
+      toast('That crop could not be saved. Please try again.');
+    } finally {
+      applyButton.disabled = false; applyButton.textContent = originalLabel;
+      releaseCropObjectUrl();
+    }
   };
 
   $('#forgot-password').onclick = () => { resetEmail.value = $('#login-email').value.trim(); resetModal.hidden = false; resetEmail.focus(); };
