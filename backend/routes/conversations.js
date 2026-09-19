@@ -41,7 +41,7 @@ router.get("/", auth, async (req, res) => {
 router.post("/", auth, async (req, res) => {
   const other = await User.findOne({ username: String(req.body.username || "").replace(/^@/, "") });
   if (!other) return res.status(404).json({ message: "User not found" });
-  let conversation = await Conversation.findOne({ members: { $all: [req.user.userId, other._id], $size: 2 } });
+  let conversation = await Conversation.findOne({ members: { $all: [req.user.userId, other._id] , $size: 2 } });
   const created = !conversation;
   if (!conversation) conversation = await Conversation.create({ members: [req.user.userId, other._id] });
   await conversation.populate("members", "name username profileImage role lastActiveAt");
@@ -80,7 +80,11 @@ router.post("/:id/messages", auth, async (req, res) => {
   const conversation = await Conversation.findOne({ _id: req.params.id, members: req.user.userId });
   const text = String(req.body.text || "").trim();
   const incomingMedia = req.body.media;
-  const media = incomingMedia && typeof incomingMedia.url === "string" && ["image", "video", "audio"].includes(incomingMedia.type) && new RegExp(`^data:${incomingMedia.type}/`).test(incomingMedia.url) ? { url: incomingMedia.url, type: incomingMedia.type } : null;
+  // Media now lives on R2 as a real https:// link, not an embedded base64
+  // data: URI — the previous check required a data: URL and silently
+  // dropped every attachment sent after that change, even though the
+  // upload itself had already succeeded.
+  const media = incomingMedia && typeof incomingMedia.url === "string" && ["image", "video", "audio"].includes(incomingMedia.type) && /^https:\/\//.test(incomingMedia.url) ? { url: incomingMedia.url, type: incomingMedia.type } : null;
   if (!conversation) return res.status(404).json({ message: "Conversation not found" });
   if (!text && !media) return res.status(400).json({ message: "Write a message or attach an image, video, or voice note" });
   conversation.messages.push({ sender: req.user.userId, text, media, deliveredAt: new Date() });
