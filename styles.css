@@ -2535,3 +2535,48 @@ body.dark .x-compose textarea { background:#000; color:#fff; }
   .x-message-stream { padding-bottom:22px; }
   body.dark .x-compose { background:#000; }
 }
+
+/* =========================================================
+   FULL-SIZE SINGLE PHOTOS (Facebook-style) + CROP/REMOVE
+   BUTTON OVERLAP FIX
+   ========================================================= */
+
+/* A single photo should be shown in full, not forced into a fixed-height
+   box and cropped — that's what "object-fit: cover" above does, by design,
+   for grids of multiple photos (they need a tidy, evenly-cropped grid).
+   A lone photo doesn't need that: it should size to its own shape, up to a
+   sensible cap so a very tall image still doesn't take over the feed. */
+.gallery-1 {
+  max-height: none;
+}
+
+.gallery-1 .gallery-item {
+  min-height: 0;
+  background: var(--cream);
+}
+
+.gallery-1 .gallery-item img,
+.gallery-1 .gallery-item video {
+  height: auto;
+  max-height: 620px;
+  object-fit: contain;
+}
+
+/* The Crop and Remove buttons in the "ready to post" preview were both
+   positioned at the exact same spot (top:6px; right:6px) — not merely
+   close together, but literally stacked on identical coordinates,
+   with Remove rendering on top since it comes later in the markup.
+   Moving Crop to the opposite corner as a small labeled pill keeps both
+   fully visible and clearly separate. */
+.media-preview button[data-crop-media] {
+  left: 6px;
+  right: auto;
+  top: 6px;
+  width: auto;
+  height: auto;
+  padding: 4px 9px;
+  border-radius: 6px;
+  background: rgba(0, 0, 0, 0.7);
+  font-size: 11px;
+  font-weight: 700;
+}
