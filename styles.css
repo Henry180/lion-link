@@ -645,6 +645,10 @@ textarea::placeholder {
   cursor: pointer;
 }
 
+.media-preview[hidden] {
+  display: none;
+}
+
 
 /* =========================================================
    RIGHT RAIL
@@ -2451,16 +2455,44 @@ body.dark .group-detail { background:#17221c; color:#fff; } body.dark .group-mem
 .profile-stats span[role="button"] { cursor:pointer; }.profile-stats span[role="button"]:hover { color:var(--gold-dark); text-decoration:underline; }
 .header-actions { display:flex; align-items:center; gap:8px; }
 .desktop-theme-toggle { display:grid; place-items:center; width:38px; height:38px; border:1px solid var(--line); border-radius:50%; background:var(--paper); color:var(--gold-dark); cursor:pointer; font-size:18px; }
-.crop-card { width:min(460px,100%); }
+.crop-card { width:min(520px,100%); }
 .crop-card p { color:var(--muted); font-size:13px; }
-.crop-stage { position:relative; width:100%; aspect-ratio:1/1; overflow:hidden; border-radius:12px; background:#111; touch-action:none; cursor:grab; }
-.crop-stage:active { cursor:grabbing; }
-.crop-stage img { position:absolute; top:50%; left:50%; max-width:none; max-height:none; user-select:none; -webkit-user-drag:none; transform:translate(-50%,-50%); }
-.crop-card label { display:grid; gap:7px; margin-top:14px; font-size:13px; font-weight:700; }
-.crop-card input { width:100%; }
+
+/* Eight-handle crop box. .crop-frame shrink-wraps exactly to the displayed
+   image (inline-block + line-height:0 removes the usual inline gap under
+   an <img>), so .crop-box's absolute left/top/width/height are naturally
+   in the same pixel space as the image itself — no separate offset math
+   needed anywhere in the JS. */
+.crop-stage { display:flex; align-items:center; justify-content:center; border-radius:12px; background:#111; overflow:hidden; max-height:70vh; }
+.crop-frame { position:relative; display:inline-block; line-height:0; }
+.crop-frame img { display:block; max-width:100%; max-height:70vh; user-select:none; -webkit-user-drag:none; pointer-events:none; }
+.crop-box { position:absolute; border:2px solid #fff; box-shadow:0 0 0 9999px rgba(0,0,0,.55); cursor:move; touch-action:none; }
+.crop-handle { position:absolute; width:16px; height:16px; margin:-8px; background:#fff; border:2px solid var(--green,#007a3d); border-radius:50%; touch-action:none; }
+.crop-handle-nw { top:0; left:0; cursor:nwse-resize; }
+.crop-handle-n  { top:0; left:50%; cursor:ns-resize; }
+.crop-handle-ne { top:0; left:100%; cursor:nesw-resize; }
+.crop-handle-e  { top:50%; left:100%; cursor:ew-resize; }
+.crop-handle-se { top:100%; left:100%; cursor:nwse-resize; }
+.crop-handle-s  { top:100%; left:50%; cursor:ns-resize; }
+.crop-handle-sw { top:100%; left:0; cursor:nesw-resize; }
+.crop-handle-w  { top:50%; left:0; cursor:ew-resize; }
+
 .crop-actions { display:flex; justify-content:flex-end; gap:10px; margin-top:18px; }
 .crop-actions button { border:1px solid var(--line); border-radius:8px; padding:9px 13px; background:var(--paper); color:inherit; cursor:pointer; }
 .crop-actions .small-post { background:var(--green); color:#fff; border-color:var(--green); }
+
+/* Video trim track: a horizontal bar spanning the clip's full length, with
+   a highlighted selected range and two draggable edge handles. */
+.trim-card { width:min(480px,100%); }
+.trim-card p { color:var(--muted); font-size:13px; }
+.trim-card video { width:100%; max-height:50vh; border-radius:10px; background:#000; margin:10px 0; display:block; }
+.trim-track { position:relative; height:44px; border-radius:8px; background:#1c1c1c; overflow:hidden; touch-action:none; }
+.trim-range { position:absolute; top:0; bottom:0; background:rgba(0,122,61,.35); border:2px solid var(--green,#007a3d); box-sizing:border-box; }
+.trim-handle { position:absolute; top:0; bottom:0; width:16px; background:var(--green,#007a3d); cursor:ew-resize; touch-action:none; }
+.trim-handle-start { left:0; border-radius:6px 0 0 6px; margin-left:-8px; }
+.trim-handle-end { right:0; border-radius:0 6px 6px 0; margin-right:-8px; }
+.trim-meta { margin-top:8px; font-size:12px; color:var(--muted); text-align:center; }
+body.dark .trim-track { background:#0a0a0a; }
 @media (max-width:700px) { .desktop-theme-toggle { display:none; } }
 @media (max-width:700px) {
   .mobile-header .theme-toggle {
@@ -2547,6 +2579,10 @@ body.dark .x-compose textarea { background:#000; color:#fff; }
    A lone photo doesn't need that: it should size to its own shape, up to a
    sensible cap so a very tall image still doesn't take over the feed. */
 .gallery-1 {
+  /* My earlier fix only reset max-height, but .post-media (on this same
+     element) sets an explicit height: 270px, which max-height alone can't
+     override — that's why long photos kept getting cut off. */
+  height: auto;
   max-height: none;
 }
 
