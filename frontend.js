@@ -87,10 +87,12 @@ async function fileData(file){
   const type = uploadFile.type.startsWith('video/')?'video':uploadFile.type.startsWith('audio/')?'audio':'image';
   const publicUrl = await uploadToR2(uploadFile);
   const result = { url: publicUrl, type };
-  if (type === 'image') cropSources.set(result, uploadFile);
+  if (type === 'image' || type === 'video') cropSources.set(result, uploadFile);
   return result;
 }
-$('#media-picker').onclick=()=>$('#media-input').click();$('#media-input').onchange=async event=>{try{selectedMedia=await Promise.all([...event.target.files].slice(0,8).filter(file=>file.size<5*1024*1024).map(fileData));$('#media-preview').hidden=!selectedMedia.length;$('#media-preview').innerHTML=selectedMedia.map((m,i)=>`<div>${m.type==='video'?`<video src="${m.url}"></video>`:`<img src="${m.url}">`}<button type="button" data-remove-media="${i}">×</button></div>`).join('');if(event.target.files.length>8)toast('Only the first 8 files were selected.')}catch{toast('That media could not be read')}};
+$('#media-picker').onclick=()=>$('#media-input').click();
+$('#quick-post-media-picker')?.addEventListener('click',()=>$('#quick-post-media').click());
+$('#announcement-media-picker')?.addEventListener('click',()=>$('#announcement-media').click());$('#media-input').onchange=async event=>{try{selectedMedia=await Promise.all([...event.target.files].slice(0,8).filter(file=>file.size<5*1024*1024).map(fileData));$('#media-preview').hidden=!selectedMedia.length;$('#media-preview').innerHTML=selectedMedia.map((m,i)=>`<div>${m.type==='video'?`<video src="${m.url}"></video>`:`<img src="${m.url}">`}<button type="button" data-remove-media="${i}">×</button></div>`).join('');if(event.target.files.length>8)toast('Only the first 8 files were selected.')}catch{toast('That media could not be read')}};
 $('#submit-post').onclick=async()=>{const text=$('#post-text').value.trim();if(!text&&!selectedMedia.length)return;try{await api('/posts',{method:'POST',body:JSON.stringify({text,media:selectedMedia})});$('#post-text').value='';selectedMedia=[];$('#media-preview').hidden=true;await loadPosts();toast('Your post is live!')}catch(error){toast(error.message)}};
 $('#open-post').onclick=()=>{show('feed');$('#post-text').focus()};$('#refresh-feed').onclick=()=>loadPosts().catch(error=>toast(error.message));$('#open-admin').onclick=()=>show('admin');$('.edit-profile').onclick=()=>{$('#edit-name').value=me.name;$('#edit-bio').value=me.bio||'';$('#edit-modal').hidden=false};$('#edit-profile-form').onsubmit=async e=>{e.preventDefault();try{const avatar=$('#edit-avatar').files[0],cover=$('#edit-cover').files[0];me=(await api('/auth/me',{method:'PATCH',body:JSON.stringify({name:$('#edit-name').value,bio:$('#edit-bio').value,profileImage:avatar?await fileData(avatar).then(x=>x.url):me.profileImage,coverImage:cover?await fileData(cover).then(x=>x.url):me.coverImage})})).user;identity();$('#edit-modal').hidden=true;toast('Profile updated.')}catch(error){toast(error.message)}};$('#help-link').onclick=()=>toast('For help, contact a Lion Link administrator.');document.querySelectorAll('[data-close-modal]').forEach(b=>b.onclick=()=>$('#'+b.dataset.closeModal).hidden=true);
 $('#announcement-form').onsubmit=async event=>{event.preventDefault();try{await api('/announcements',{method:'POST',body:JSON.stringify({title:$('#announcement-title').value,body:$('#announcement-body').value})});event.target.reset();await loadAnnouncements();toast('Announcement published.')}catch(error){toast(error.message)}};
@@ -820,11 +822,16 @@ openChat = function(id) {
 loadNotifications = async function() {
   if (!token) return;
   try {
-    const { notifications, unread } = await api('/notifications');
+    const { notifications } = await api('/notifications');
+    // Message notifications get their own badge on the Messages icon — the
+    // general bell should never also list or count them, or unread DMs get
+    // counted (and shown) twice, once on each icon.
+    const bellItems = notifications.filter(item => item.type !== 'message');
+    const unread = bellItems.filter(item => !item.read).length;
     const count = $('#notification-count'); count.textContent = unread; count.hidden = !unread;
     const mobile = $('.bottom-nav [data-view="notifications"]');
     if (mobile) mobile.innerHTML = `<span class="ui-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9M10 21h4"/></svg></span>Notification${unread ? `<i class="mobile-notification-count">${unread}</i>` : ''}`;
-    $('#notification-list').innerHTML = notifications.map(item => { const photo=item.actor?.profileImage ? ` style="background-image:url('${item.actor.profileImage}');background-size:cover"` : ''; return `<button type="button" class="notification ${item.read ? 'read' : 'unread'}" data-notification-id="${item._id}" data-notification-type="${item.type}" data-notification-actor="${esc(item.actor?.username || '')}" data-notification-post="${item.post?._id || item.post || ''}" data-notification-conversation="${item.conversation?._id || item.conversation || ''}"><div class="avatar avatar-gold"${photo}>${item.actor?.profileImage ? '' : initials(item.actor?.name)}</div><p><b>${esc(item.actor?.name || 'Someone')}</b> ${item.type === 'follow' ? 'started following you' : item.type === 'like' ? 'liked your post' : item.type === 'comment' ? 'commented on your post' : 'sent you a message'}<small>${when(item.createdAt)}</small></p></button>`; }).join('') || '<p class="empty-profile">You have no notifications yet.</p>';
+    $('#notification-list').innerHTML = bellItems.map(item => { const photo=item.actor?.profileImage ? ` style="background-image:url('${item.actor.profileImage}');background-size:cover"` : ''; return `<button type="button" class="notification ${item.read ? 'read' : 'unread'}" data-notification-id="${item._id}" data-notification-type="${item.type}" data-notification-actor="${esc(item.actor?.username || '')}" data-notification-post="${item.post?._id || item.post || ''}" data-notification-conversation="${item.conversation?._id || item.conversation || ''}"><div class="avatar avatar-gold"${photo}>${item.actor?.profileImage ? '' : initials(item.actor?.name)}</div><p><b>${esc(item.actor?.name || 'Someone')}</b> ${item.type === 'follow' ? 'started following you' : item.type === 'like' ? 'liked your post' : 'commented on your post'}<small>${when(item.createdAt)}</small></p></button>`; }).join('') || '<p class="empty-profile">You have no notifications yet.</p>';
   } catch (error) { console.warn(error); }
 };
 // The previous code predates the visible top-right switch; restore saved mode.
@@ -852,23 +859,31 @@ renderPosts = function() {
   const resetForm = $('#reset-password-form');
   const resetCopy = $('#reset-password-copy');
   const resetEmail = $('#reset-email');
+  // =========================================================
+  // IMAGE CROP — eight-handle resizable box
+  // =========================================================
   let cropTarget = null;
-  let crop = { image: null, scale: 1, base: 1, x: 0, y: 0, drag: null };
-  const stage = $('.crop-stage');
+  let crop = { image: null, _objectUrl: null };
+  let cropBoxRect = { left: 0, top: 0, width: 0, height: 0 };
+  let cropDrag = null;
+  const MIN_CROP_SIZE = 40;
+  const cropFrame = $('#crop-frame');
   const cropImage = $('#crop-image');
-  const cropZoom = $('#crop-zoom');
+  const cropBox = $('#crop-box');
 
-  const redrawCrop = () => {
-    if (!crop.image) return;
-    const size = stage.clientWidth;
-    const width = crop.image.naturalWidth * crop.base * crop.scale;
-    const height = crop.image.naturalHeight * crop.base * crop.scale;
-    crop.x = Math.max(-(width - size) / 2, Math.min((width - size) / 2, crop.x));
-    crop.y = Math.max(-(height - size) / 2, Math.min((height - size) / 2, crop.y));
-    cropImage.style.width = `${width}px`;
-    cropImage.style.height = `${height}px`;
-    cropImage.style.left = `${size / 2 + crop.x}px`;
-    cropImage.style.top = `${size / 2 + crop.y}px`;
+  const applyCropBoxStyle = () => {
+    cropBox.style.left = `${cropBoxRect.left}px`;
+    cropBox.style.top = `${cropBoxRect.top}px`;
+    cropBox.style.width = `${cropBoxRect.width}px`;
+    cropBox.style.height = `${cropBoxRect.height}px`;
+  };
+
+  // The crop box starts covering the whole photo; the person narrows it
+  // down from there by dragging a corner, an edge, or the box itself —
+  // same interaction as a native photo app's cropper.
+  const initCropBox = () => {
+    cropBoxRect = { left: 0, top: 0, width: cropImage.clientWidth, height: cropImage.clientHeight };
+    applyCropBoxStyle();
   };
 
   const openCrop = index => {
@@ -886,16 +901,18 @@ renderPosts = function() {
     crop.image = new Image();
     if (!localFile) crop.image.crossOrigin = 'anonymous';
     crop.image.onload = () => {
-      crop.base = Math.max(stage.clientWidth / crop.image.naturalWidth, stage.clientHeight / crop.image.naturalHeight);
-      crop.scale = 1; crop.x = 0; crop.y = 0; cropZoom.value = '1';
-      cropImage.src = source; redrawCrop(); $('#crop-modal').hidden = false;
+      // Reveal the popup before measuring anything — a hidden element has
+      // zero width/height, which was silently producing a blank preview.
+      $('#crop-modal').hidden = false;
+      cropImage.src = source;
+      requestAnimationFrame(initCropBox);
     };
     crop.image.src = source;
   };
 
   const renderSelectedMedia = () => {
     $('#media-preview').hidden = !selectedMedia.length;
-    $('#media-preview').innerHTML = selectedMedia.map((item, index) => `<div>${item.type === 'video' ? `<video src="${item.url}"></video>` : `<img src="${item.url}" alt="Selected image">`}<button type="button" data-crop-media="${index}" ${item.type !== 'image' ? 'hidden' : ''}>Crop</button><button type="button" data-remove-media="${index}" aria-label="Remove media">×</button></div>`).join('');
+    $('#media-preview').innerHTML = selectedMedia.map((item, index) => `<div>${item.type === 'video' ? `<video src="${item.url}"></video>` : `<img src="${item.url}" alt="Selected image">`}${item.type === 'image' ? `<button type="button" data-crop-media="${index}">Crop</button>` : ''}${item.type === 'video' ? `<button type="button" data-trim-media="${index}">Trim</button>` : ''}<button type="button" data-remove-media="${index}" aria-label="Remove media">×</button></div>`).join('');
   };
 
   $('#media-input').onchange = async event => {
@@ -909,10 +926,55 @@ renderPosts = function() {
     const cropButton = event.target.closest('[data-crop-media]');
     if (cropButton) { event.preventDefault(); openCrop(Number(cropButton.dataset.cropMedia)); }
   }, true);
-  cropZoom.oninput = () => { crop.scale = Number(cropZoom.value); redrawCrop(); };
-  stage.addEventListener('pointerdown', event => { crop.drag = { x: event.clientX, y: event.clientY, left: crop.x, top: crop.y }; stage.setPointerCapture(event.pointerId); });
-  stage.addEventListener('pointermove', event => { if (!crop.drag) return; crop.x = crop.drag.left + event.clientX - crop.drag.x; crop.y = crop.drag.top + event.clientY - crop.drag.y; redrawCrop(); });
-  stage.addEventListener('pointerup', () => { crop.drag = null; });
+
+  const beginCropDrag = (event, mode) => {
+    event.preventDefault();
+    cropDrag = {
+      mode,
+      startX: event.clientX,
+      startY: event.clientY,
+      startRect: { ...cropBoxRect },
+      frameW: cropFrame.clientWidth,
+      frameH: cropFrame.clientHeight
+    };
+    event.target.setPointerCapture?.(event.pointerId);
+  };
+  const updateCropDrag = event => {
+    if (!cropDrag) return;
+    const dx = event.clientX - cropDrag.startX;
+    const dy = event.clientY - cropDrag.startY;
+    const { frameW, frameH, mode } = cropDrag;
+    let { left, top, width, height } = cropDrag.startRect;
+
+    if (mode === 'move') {
+      left = Math.min(Math.max(0, left + dx), frameW - width);
+      top = Math.min(Math.max(0, top + dy), frameH - height);
+    } else {
+      let right = left + width, bottom = top + height;
+      if (mode.includes('n')) top = Math.min(Math.max(0, top + dy), bottom - MIN_CROP_SIZE);
+      if (mode.includes('s')) bottom = Math.max(Math.min(frameH, bottom + dy), top + MIN_CROP_SIZE);
+      if (mode.includes('w')) left = Math.min(Math.max(0, left + dx), right - MIN_CROP_SIZE);
+      if (mode.includes('e')) right = Math.max(Math.min(frameW, right + dx), left + MIN_CROP_SIZE);
+      left = Math.max(0, left); top = Math.max(0, top);
+      right = Math.min(frameW, right); bottom = Math.min(frameH, bottom);
+      width = right - left; height = bottom - top;
+    }
+    cropBoxRect = { left, top, width, height };
+    applyCropBoxStyle();
+  };
+  const endCropDrag = () => { cropDrag = null; };
+
+  cropBox.addEventListener('pointerdown', event => {
+    if (event.target.closest('[data-handle]')) return;
+    beginCropDrag(event, 'move');
+  });
+  cropBox.querySelectorAll('[data-handle]').forEach(handle => {
+    handle.addEventListener('pointerdown', event => beginCropDrag(event, handle.dataset.handle));
+  });
+  document.addEventListener('pointermove', updateCropDrag);
+  document.addEventListener('pointerup', endCropDrag);
+  document.addEventListener('pointercancel', endCropDrag);
+
   const releaseCropObjectUrl = () => { if (crop._objectUrl) { URL.revokeObjectURL(crop._objectUrl); crop._objectUrl = null; } };
   $('#cancel-crop').onclick = () => { $('#crop-modal').hidden = true; releaseCropObjectUrl(); };
   $('#apply-crop').onclick = async () => {
@@ -921,12 +983,20 @@ renderPosts = function() {
     const originalLabel = applyButton.textContent;
     applyButton.disabled = true; applyButton.textContent = 'Uploading…';
     try {
-      const output = document.createElement('canvas'); output.width = output.height = 1080;
-      const size = stage.clientWidth, sourceScale = crop.base * crop.scale;
-      const sourceSize = size / sourceScale;
-      const sx = Math.max(0, Math.min(crop.image.naturalWidth - sourceSize, crop.image.naturalWidth / 2 - sourceSize / 2 - crop.x / sourceScale));
-      const sy = Math.max(0, Math.min(crop.image.naturalHeight - sourceSize, crop.image.naturalHeight / 2 - sourceSize / 2 - crop.y / sourceScale));
-      output.getContext('2d').drawImage(crop.image, sx, sy, sourceSize, sourceSize, 0, 0, 1080, 1080);
+      const scaleX = crop.image.naturalWidth / cropImage.clientWidth;
+      const scaleY = crop.image.naturalHeight / cropImage.clientHeight;
+      const sx = cropBoxRect.left * scaleX;
+      const sy = cropBoxRect.top * scaleY;
+      const sw = cropBoxRect.width * scaleX;
+      const sh = cropBoxRect.height * scaleY;
+      // Cap the output's longest edge the same way every other uploaded
+      // photo is capped, so cropping a huge original doesn't upload an
+      // oversized file.
+      const outputScale = Math.min(1, 1600 / Math.max(sw, sh));
+      const output = document.createElement('canvas');
+      output.width = Math.max(1, Math.round(sw * outputScale));
+      output.height = Math.max(1, Math.round(sh * outputScale));
+      output.getContext('2d').drawImage(crop.image, sx, sy, sw, sh, 0, 0, output.width, output.height);
       const blob = await new Promise((resolve, reject) => output.toBlob(b => b ? resolve(b) : reject(Error('Could not prepare crop')), 'image/jpeg', 0.9));
       const croppedFile = new File([blob], 'cropped.jpg', { type: 'image/jpeg' });
       const publicUrl = await uploadToR2(croppedFile);
@@ -940,6 +1010,143 @@ renderPosts = function() {
     } finally {
       applyButton.disabled = false; applyButton.textContent = originalLabel;
       releaseCropObjectUrl();
+    }
+  };
+
+  // =========================================================
+  // VIDEO TRIM — drag the start/end handles, then re-record just that
+  // section. There is no lightweight way to cut a video file directly in
+  // the browser the way a canvas can crop an image; replaying the clip
+  // into a new recording is the practical option that doesn't require a
+  // large video-processing library. That means trimming takes roughly as
+  // long as the trimmed section itself, the result is saved as .webm
+  // regardless of the original format, and it needs a browser that
+  // supports HTMLVideoElement.captureStream (current Chrome, Edge and
+  // Firefox; Safari support has historically been inconsistent).
+  // =========================================================
+  let trimTarget = null;
+  let trimState = { duration: 0, start: 0, end: 0 };
+  let trimDrag = null;
+  const trimVideoEl = $('#trim-video');
+  const trimTrack = $('#trim-track');
+  const trimRange = $('#trim-range');
+
+  const formatTrimTime = seconds => {
+    const s = Math.max(0, Math.round(seconds || 0));
+    return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
+  };
+  const applyTrimRangeStyle = () => {
+    if (!trimState.duration) return;
+    const startPct = (trimState.start / trimState.duration) * 100;
+    const endPct = (trimState.end / trimState.duration) * 100;
+    trimRange.style.left = `${startPct}%`;
+    trimRange.style.width = `${Math.max(0, endPct - startPct)}%`;
+  };
+  const updateTrimMeta = () => {
+    $('#trim-duration').textContent = `${formatTrimTime(trimState.start)} – ${formatTrimTime(trimState.end)}  ·  ${formatTrimTime(trimState.end - trimState.start)} selected`;
+  };
+
+  const openTrim = index => {
+    const media = selectedMedia[index];
+    if (!media || media.type !== 'video') return;
+    trimTarget = index;
+    const localFile = cropSources.get(media);
+    const source = localFile ? URL.createObjectURL(localFile) : media.url;
+    trim._objectUrl = localFile ? source : null;
+    trimVideoEl.src = source;
+    trimVideoEl.onloadedmetadata = () => {
+      trimState = { duration: trimVideoEl.duration, start: 0, end: trimVideoEl.duration };
+      $('#trim-modal').hidden = false;
+      applyTrimRangeStyle();
+      updateTrimMeta();
+    };
+  };
+  const trim = { _objectUrl: null };
+  const releaseTrimObjectUrl = () => { if (trim._objectUrl) { URL.revokeObjectURL(trim._objectUrl); trim._objectUrl = null; } };
+
+  document.addEventListener('click', event => {
+    const trimButton = event.target.closest('[data-trim-media]');
+    if (trimButton) { event.preventDefault(); openTrim(Number(trimButton.dataset.trimMedia)); }
+  }, true);
+
+  const beginTrimDrag = (event, handle) => {
+    event.preventDefault();
+    trimDrag = { handle, trackRect: trimTrack.getBoundingClientRect() };
+    event.target.setPointerCapture?.(event.pointerId);
+  };
+  const updateTrimDrag = event => {
+    if (!trimDrag) return;
+    const { trackRect, handle } = trimDrag;
+    const fraction = Math.min(1, Math.max(0, (event.clientX - trackRect.left) / trackRect.width));
+    const time = fraction * trimState.duration;
+    const MIN_TRIM = 0.5;
+    if (handle === 'start') { trimState.start = Math.min(time, trimState.end - MIN_TRIM); trimVideoEl.currentTime = trimState.start; }
+    else { trimState.end = Math.max(time, trimState.start + MIN_TRIM); trimVideoEl.currentTime = trimState.end; }
+    applyTrimRangeStyle();
+    updateTrimMeta();
+  };
+  const endTrimDrag = () => { trimDrag = null; };
+
+  document.querySelectorAll('[data-trim-handle]').forEach(handle => {
+    handle.addEventListener('pointerdown', event => beginTrimDrag(event, handle.dataset.trimHandle));
+  });
+  document.addEventListener('pointermove', updateTrimDrag);
+  document.addEventListener('pointerup', endTrimDrag);
+  document.addEventListener('pointercancel', endTrimDrag);
+
+  $('#cancel-trim').onclick = () => { $('#trim-modal').hidden = true; releaseTrimObjectUrl(); };
+
+  async function recordTrimmedVideo(videoEl, start, end, onProgress) {
+    const captureStream = videoEl.captureStream || videoEl.mozCaptureStream;
+    if (!captureStream || !window.MediaRecorder) throw Error('Video trimming is not supported in this browser.');
+    const stream = captureStream.call(videoEl);
+    const mimeType = ['video/webm;codecs=vp9,opus', 'video/webm;codecs=vp8,opus', 'video/webm']
+      .find(type => MediaRecorder.isTypeSupported?.(type)) || 'video/webm';
+    const recorder = new MediaRecorder(stream, { mimeType });
+    const chunks = [];
+    recorder.ondataavailable = event => { if (event.data.size) chunks.push(event.data); };
+
+    return new Promise((resolve, reject) => {
+      recorder.onerror = event => reject(event.error || Error('Recording failed'));
+      recorder.onstop = () => resolve(new Blob(chunks, { type: mimeType }));
+      videoEl.currentTime = start;
+      const onSeeked = () => {
+        videoEl.removeEventListener('seeked', onSeeked);
+        recorder.start();
+        videoEl.play().catch(reject);
+        const checkProgress = () => {
+          if (videoEl.paused) return;
+          if (videoEl.currentTime >= end || videoEl.ended) { videoEl.pause(); recorder.stop(); return; }
+          onProgress?.((videoEl.currentTime - start) / Math.max(0.001, end - start));
+          requestAnimationFrame(checkProgress);
+        };
+        requestAnimationFrame(checkProgress);
+      };
+      videoEl.addEventListener('seeked', onSeeked);
+    });
+  }
+
+  $('#apply-trim').onclick = async () => {
+    if (trimTarget === null) return;
+    const applyButton = $('#apply-trim');
+    const originalLabel = applyButton.textContent;
+    applyButton.disabled = true;
+    try {
+      const trimmedBlob = await recordTrimmedVideo(trimVideoEl, trimState.start, trimState.end,
+        progress => { applyButton.textContent = `Trimming… ${Math.round(progress * 100)}%`; });
+      applyButton.textContent = 'Uploading…';
+      const trimmedFile = new File([trimmedBlob], 'trimmed.webm', { type: trimmedBlob.type });
+      const publicUrl = await uploadToR2(trimmedFile);
+      const newMedia = { url: publicUrl, type: 'video' };
+      cropSources.set(newMedia, trimmedFile);
+      selectedMedia[trimTarget] = newMedia;
+      renderSelectedMedia();
+      $('#trim-modal').hidden = true;
+    } catch (error) {
+      toast(error?.message === 'Video trimming is not supported in this browser.' ? error.message : 'That trim could not be saved. Please try again.');
+    } finally {
+      applyButton.disabled = false; applyButton.textContent = originalLabel;
+      releaseTrimObjectUrl();
     }
   };
 
@@ -988,6 +1195,12 @@ renderPosts = function() {
   const messagesView = $('#messages-view'); if (!messagesView) return;
   let attachedMedia = null, sending = false, knownIncoming = new Set(), restored = false;
   const avatar = user => { const image=user?.profileImage?` style="background-image:url('${user.profileImage}');background-size:cover"`:''; return `<button class="avatar avatar-gold x-profile-link" type="button" data-profile="${esc(user?.username||'')}"${image}>${user?.profileImage?'':initials(user?.name)}</button>`; };
+  const renderAttachPreview = () => {
+    const box = document.getElementById('x-attach-preview');
+    if (!box) return;
+    box.classList.toggle('has-media', !!attachedMedia);
+    box.innerHTML = attachedMedia ? `<div class="chat-preview-item">${attachedMedia.type === 'video' ? `<video src="${attachedMedia.url}"></video>` : attachedMedia.type === 'audio' ? `<span style="display:grid;place-items:center;height:100%;font-size:22px">🎙</span>` : `<img src="${attachedMedia.url}" alt="Attachment preview">`}<button type="button" id="x-remove-attach" aria-label="Remove attachment">×</button></div>` : '';
+  };
   const otherMember = c => c.members.find(member => String(member._id||member.id)!==String(me?.id)) || me;
   const mine = message => String(message.sender?._id||message.sender)===String(me?.id);
   const preview = message => message?.text || (message?.media?'Sent an attachment':'Start a conversation');
@@ -1002,8 +1215,8 @@ renderPosts = function() {
   const renderWelcome = () => { $('#x-chat-panel').innerHTML='<section class="x-welcome"><span>✉</span><h2>Your messages</h2><p>Select a conversation or start a new private message.</p><button type="button" class="small-post" data-new-dm>Write a message</button></section>'; renderInbox(); };
   const renderChat = () => { if(!activeChat)return renderWelcome(); const other=otherMember(activeChat); const rows=(activeChat.messages||[]).map(message=>{const own=mine(message),media=message.media?.url?`<div class="x-message-media">${message.media.type==='video'?`<video controls src="${message.media.url}"></video>`:message.media.type==='audio'?`<audio controls src="${message.media.url}"></audio>`:`<img src="${message.media.url}" alt="Message attachment">`}</div>`:'';const status=own?`<small class="x-status">${message.pending?'Sending':message.readAt?'Read':message.deliveredAt?'Delivered':'Sent'}</small>`:'';return `<article class="x-message ${own?'mine':''}">${own?'':avatar(other)}<div><div class="x-bubble">${media}${message.text?`<p>${esc(message.text)}</p>`:''}</div><time>${when(message.createdAt)} ${status}</time></div></article>`;}).join('')||'<p class="x-empty">Say hello to start the conversation.</p>';
     const presence = other.lastActiveAt && Date.now() - new Date(other.lastActiveAt).getTime() < 2 * 60 * 1000 ? 'Active now' : other.lastActiveAt ? `Last active ${when(other.lastActiveAt)} ago` : '';
-    $('#x-chat-panel').innerHTML=`<header class="x-chat-header"><button type="button" data-x-back aria-label="Back to inbox">‹</button>${avatar(other)}<button class="x-chat-person" type="button" data-profile="${esc(other.username)}"><b>${esc(other.name)}${verifiedBadge(other)}</b><small>@${esc(other.username)}${presence ? ` · ${presence}` : ''}</small></button></header><section class="x-message-stream" id="x-message-stream">${rows}</section><form id="x-compose" class="x-compose"><button class="x-emoji" type="button" title="Add emoji" data-emoji>☺</button><label title="Attach photo or video">▣<input id="x-media-input" type="file" accept="image/*,video/*" hidden></label><textarea id="x-message-input" maxlength="300" rows="1" placeholder="Start a new message"></textarea><button class="small-post" type="submit">Send</button></form>`;
-    const stream=$('#x-message-stream');stream.scrollTop=stream.scrollHeight; $('#x-media-input').onchange=async e=>{const file=e.target.files[0];if(!file)return;if(file.size>5*1024*1024)return toast('Attachments must be 5 MB or smaller.');try{attachedMedia=await fileData(file);toast('Attachment ready to send.');}catch{toast('That attachment could not be read.');}};
+    $('#x-chat-panel').innerHTML=`<header class="x-chat-header"><button type="button" data-x-back aria-label="Back to inbox">‹</button>${avatar(other)}<button class="x-chat-person" type="button" data-profile="${esc(other.username)}"><b>${esc(other.name)}${verifiedBadge(other)}</b><small>@${esc(other.username)}${presence ? ` · ${presence}` : ''}</small></button></header><section class="x-message-stream" id="x-message-stream">${rows}</section><form id="x-compose" class="x-compose"><button class="x-emoji" type="button" title="Add emoji" data-emoji>☺</button><label title="Attach photo or video"><span class="ui-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M21.44 11.05l-9.19 9.19a5.5 5.5 0 0 1-7.78-7.78l9.2-9.19a3.5 3.5 0 0 1 4.95 4.95l-9.2 9.19a1.5 1.5 0 0 1-2.12-2.12l8.49-8.48"/></svg></span><input id="x-media-input" type="file" accept="image/*,video/*" hidden></label><textarea id="x-message-input" maxlength="300" rows="1" placeholder="Start a new message"></textarea><button class="small-post" type="submit">Send</button></form><div id="x-attach-preview" class="chat-media-preview"></div>`;
+    const stream=$('#x-message-stream');stream.scrollTop=stream.scrollHeight; $('#x-media-input').onchange=async e=>{const file=e.target.files[0];if(!file)return;if(file.size>5*1024*1024)return toast('Attachments must be 5 MB or smaller.');try{attachedMedia=await fileData(file);renderAttachPreview();}catch{toast('That attachment could not be read.');}};
   };
   const renderMessages = () => { messagesView.innerHTML='<header class="page-header x-messages-header"><div><p class="eyebrow">PRIVATE CONVERSATIONS</p><h1>Messages</h1></div><button class="small-post" id="x-new-message" type="button">New message</button></header><div class="x-messages-shell"><aside class="x-inbox"><label class="x-search">⌕<input id="x-inbox-search" type="search" placeholder="Search messages or people"></label><div id="x-conversation-list"></div></aside><section class="x-chat" id="x-chat-panel"></section></div>';$('.x-messages-shell').classList.toggle('x-chat-open',!!activeChat);activeChat?renderChat():renderWelcome();$('#x-new-message').onclick=openNew;$('#x-inbox-search').oninput=e=>search(e.target.value); };
   const openNew = () => { requestNotifications(); $('#user-search-modal').hidden=false; $('#user-search-input').value=''; $('#user-search-results').innerHTML='<p class="empty-profile">Search registered Lion Link users.</p>'; $('#user-search-input').focus(); };
@@ -1011,8 +1224,8 @@ renderPosts = function() {
   loadChats = async function(){const result=await api('/conversations');const before=new Set(knownIncoming), previous=activeChat;conversations=(result.conversations||[]).sort((a,b)=>new Date(b.updatedAt)-new Date(a.updatedAt));conversations.forEach(c=>{const message=inboxLast(c);if(message&&!mine(message)&&!message.readAt){const key=`${c._id}:${message._id}`;if(knownIncoming.size&&!before.has(key)&&Notification.permission==='granted')new Notification(otherMember(c).name,{body:preview(message),tag:key});knownIncoming.add(key);}});if(previous){const summary=conversations.find(c=>c._id===previous._id);activeChat=summary?{...summary,messages:previous.messages||[]}:null;}renderMessages();};
   openChat = async id => { const summary=conversations.find(c=>c._id===id);if(!summary)return;activeChat={...summary,messages:activeChat?._id===id?activeChat.messages||[]:[]};show('messages');persist();renderMessages();try{const {conversation}=await api(`/conversations/${id}?limit=50`);if(activeChat?._id!==id)return;activeChat=conversation;renderMessages();if(unreadCount(summary)){await api(`/conversations/${id}/read`,{method:'POST'});activeChat.messages.forEach(message=>{if(!mine(message))message.readAt=new Date().toISOString();});await loadChats();}}catch(error){toast(error.message);}};
   const startDM = async username => {try{const {conversation}=await api('/conversations',{method:'POST',body:JSON.stringify({username}),showLoading:true});await loadChats();$('#user-search-modal').hidden=true;await openChat(conversation._id);}catch(error){toast(error.message);}};
-  document.addEventListener('click',e=>{const chat=e.target.closest('[data-x-chat]');if(chat&&!e.target.closest('[data-profile]')){e.preventDefault();openChat(chat.dataset.xChat);}if(e.target.closest('[data-x-back]')){activeChat=null;persist();renderMessages();}if(e.target.closest('[data-new-dm]'))openNew();const start=e.target.closest('[data-start-dm]');if(start)startDM(start.dataset.startDm);if(e.target.closest('[data-emoji]')){$('#x-message-input').value+='😊';$('#x-message-input').focus();}},true);
-  document.addEventListener('submit',async e=>{if(e.target.id!=='x-compose')return;e.preventDefault();if(!activeChat||sending)return;const input=$('#x-message-input'),text=input.value.trim();if(!text&&!attachedMedia)return;const chatId=activeChat._id, media=attachedMedia, pending={_id:`pending-${Date.now()}`,sender:me.id,text,media,createdAt:new Date().toISOString(),pending:true};sending=true;const send=e.target.querySelector('[type="submit"]');send.disabled=true;attachedMedia=null;input.value='';activeChat.messages.push(pending);conversations=[activeChat,...conversations.filter(c=>c._id!==chatId)];renderMessages();try{await api(`/conversations/${chatId}/messages`,{method:'POST',body:JSON.stringify({text,media}),showLoading:true});await loadChats();await openChat(chatId);}catch(error){activeChat.messages=activeChat.messages.filter(message=>message._id!==pending._id);renderMessages();toast(error.message);}finally{sending=false;const current=$('#x-compose [type="submit"]');if(current)current.disabled=false;}},true);
+  document.addEventListener('click',e=>{const chat=e.target.closest('[data-x-chat]');if(chat&&!e.target.closest('[data-profile]')){e.preventDefault();openChat(chat.dataset.xChat);}if(e.target.closest('[data-x-back]')){activeChat=null;persist();renderMessages();}if(e.target.closest('[data-new-dm]'))openNew();const start=e.target.closest('[data-start-dm]');if(start)startDM(start.dataset.startDm);if(e.target.closest('[data-emoji]')){$('#x-message-input').value+='😊';$('#x-message-input').focus();}if(e.target.id==='x-remove-attach'){attachedMedia=null;renderAttachPreview();const input=document.getElementById('x-media-input');if(input)input.value='';}},true);
+  document.addEventListener('submit',async e=>{if(e.target.id!=='x-compose')return;e.preventDefault();if(!activeChat||sending)return;const input=$('#x-message-input'),text=input.value.trim();if(!text&&!attachedMedia)return;const chatId=activeChat._id, media=attachedMedia, pending={_id:`pending-${Date.now()}`,sender:me.id,text,media,createdAt:new Date().toISOString(),pending:true};sending=true;const send=e.target.querySelector('[type="submit"]');send.disabled=true;attachedMedia=null;renderAttachPreview();input.value='';activeChat.messages.push(pending);conversations=[activeChat,...conversations.filter(c=>c._id!==chatId)];renderMessages();try{await api(`/conversations/${chatId}/messages`,{method:'POST',body:JSON.stringify({text,media}),showLoading:true});await loadChats();await openChat(chatId);}catch(error){activeChat.messages=activeChat.messages.filter(message=>message._id!==pending._id);renderMessages();toast(error.message);}finally{sending=false;const current=$('#x-compose [type="submit"]');if(current)current.disabled=false;}},true);
   document.addEventListener('keydown',event=>{if(event.target.id==='x-message-input'&&event.key==='Enter'&&!event.shiftKey){event.preventDefault();event.target.closest('form')?.requestSubmit();}});
   document.addEventListener('keydown',event=>{const row=event.target.closest('[data-x-chat],[data-start-dm]');if(row&&(event.key==='Enter'||event.key===' ')){event.preventDefault();row.dataset.xChat?openChat(row.dataset.xChat):startDM(row.dataset.startDm);}});
   const originalSearch=$('#user-search-input').oninput; $('#user-search-input').oninput=e=>{originalSearch?.(e);}; document.addEventListener('click',e=>{const person=e.target.closest('#user-search-results .person');const username=person?.querySelector('[data-profile]')?.dataset.profile||person?.querySelector('[data-avatar]')?.dataset.avatar;if(username){e.preventDefault();e.stopPropagation();startDM(username);}},true);
