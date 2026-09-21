@@ -3,6 +3,12 @@
 const configuredApiUrl = window.LION_LINK_API_URL || (location.protocol === 'file:' || location.hostname === 'localhost' || location.hostname === '127.0.0.1' ? 'http://localhost:5000/api' : '/api');
 const API_URL = configuredApiUrl.replace(/\/$/, '').replace(/\/api$/, '') + '/api';
 const $ = s => document.querySelector(s);
+// 60 MB is generous for a short clip; images get resized down regardless of
+// their original size, so this limit mainly exists to keep video uploads
+// reasonable, not to restrict them the way the old 5 MB base64 limit
+// unintentionally did. Declared here (true top-level scope) rather than
+// inside any one IIFE, since both the composer and chat need it.
+const MAX_UPLOAD_BYTES = 60 * 1024 * 1024;
 let token = localStorage.getItem('lionLinkToken');
 let me = null, posts = [], announcements = [], conversations = [], activeChat = null, selectedMedia = [], stories=[], viewedProfile=null, quickMedia=[], announcementMedia=[];
 const esc = value => { const el=document.createElement('div'); el.textContent=value||''; return el.innerHTML; };
@@ -506,7 +512,25 @@ window.addEventListener('click', event => {
   const priorShow = show;
   show = function(view) { priorShow(view); if (view === 'groups') loadGroups().catch(error => toast(error.message)); };
   $('#open-group-create')?.addEventListener('click', () => $('#group-create-modal').hidden = false);
-  $('#group-create-form')?.addEventListener('submit', async event => { event.preventDefault(); try { const file = $('#group-cover').files[0]; const { group } = await api('/groups', { method: 'POST', body: JSON.stringify({ name: $('#group-name').value, description: $('#group-description').value, privacy: $('#group-privacy').value, coverImage: file ? (await fileData(file)).url : '' }) }); groups.unshift(group); $('#group-create-modal').hidden = true; event.target.reset(); $('#group-list').innerHTML = groups.map(groupMarkup).join(''); toast('Group created — waiting for Lion Link Admin approval.'); } catch (error) { toast(error.message); } });
+  let groupCoverMedia = null;
+  const renderGroupCoverPreview = () => {
+    const box = $('#group-cover-preview');
+    if (!box) return;
+    box.hidden = !groupCoverMedia;
+    box.innerHTML = groupCoverMedia ? `<div><img src="${groupCoverMedia.url}" alt="Cover preview"><button type="button" id="group-cover-crop">Crop</button><button type="button" id="group-cover-remove" aria-label="Remove cover">×</button></div>` : '';
+  };
+  $('#group-cover')?.addEventListener('change', async event => {
+    const file = event.target.files[0];
+    if (!file) return;
+    if (file.size > MAX_UPLOAD_BYTES) { event.target.value = ''; return toast('That file is over 60 MB — please choose a smaller one.'); }
+    try { groupCoverMedia = await fileData(file); renderGroupCoverPreview(); }
+    catch { toast('That image could not be read.'); }
+  });
+  document.addEventListener('click', event => {
+    if (event.target.id === 'group-cover-crop' && groupCoverMedia) openCropFor(groupCoverMedia, newMedia => { groupCoverMedia = newMedia; renderGroupCoverPreview(); });
+    if (event.target.id === 'group-cover-remove') { groupCoverMedia = null; const input = $('#group-cover'); if (input) input.value = ''; renderGroupCoverPreview(); }
+  });
+  $('#group-create-form')?.addEventListener('submit', async event => { event.preventDefault(); try { const { group } = await api('/groups', { method: 'POST', body: JSON.stringify({ name: $('#group-name').value, description: $('#group-description').value, privacy: $('#group-privacy').value, coverImage: groupCoverMedia?.url || '' }) }); groups.unshift(group); $('#group-create-modal').hidden = true; event.target.reset(); groupCoverMedia = null; renderGroupCoverPreview(); $('#group-list').innerHTML = groups.map(groupMarkup).join(''); toast('Group created — waiting for Lion Link Admin approval.'); } catch (error) { toast(error.message); } });
   document.addEventListener('click', async event => { const button = event.target.closest('[data-join-group],[data-leave-group],[data-delete-group],[data-approve-group]'); if (!button) return; const id = button.dataset.joinGroup || button.dataset.leaveGroup || button.dataset.deleteGroup || button.dataset.approveGroup; const endpoint = button.dataset.joinGroup ? 'join' : button.dataset.leaveGroup ? 'leave' : button.dataset.approveGroup ? 'approve' : null; if (!endpoint && !confirm('Delete this group permanently?')) return; try { if (endpoint) { const { group } = await api(`/groups/${id}/${endpoint}`, { method: endpoint === 'approve' ? 'PATCH' : 'POST' }); groups = groups.map(item => item._id === id ? group : item); } else { await api(`/groups/${id}`, { method: 'DELETE' }); groups = groups.filter(item => item._id !== id); } $('#group-list').innerHTML = groups.map(groupMarkup).join('') || '<p class="empty-profile">No groups yet.</p>'; } catch (error) { toast(error.message); } }, true);
   async function openGroup(id) { try { const { group } = await api(`/groups/${id}`); const image = group.coverImage ? ` style="background-image:url('${group.coverImage}')"` : ''; const members = (group.members || []).map(member => `<button type="button" class="group-member" data-profile="${esc(member.username)}">${esc(member.name)} · @${esc(member.username)}</button>`).join('') || '<p>No members yet.</p>'; const approve = me?.role === 'admin' && !group.approved ? `<button class="small-post" data-approve-group="${group._id}">Approve group</button>` : ''; const membershipAction = group.isOwner ? '' : group.isMember ? `<button class="small-post" data-leave-group="${group._id}">Leave group</button>` : `<button class="small-post" data-join-group="${group._id}">Join group</button>`; const deleteAction = group.isOwner || me?.role === 'admin' ? `<button class="small-post" data-delete-group="${group._id}">Delete group</button>` : ''; const messages = (group.messages || []).map(message => `<article class="group-message reactable ${String(message.sender?._id || message.sender) === String(me?.id) ? 'mine' : ''}" data-react-group="${group._id}:${message._id}"><b>${esc(message.sender?.name || 'Member')}${verifiedBadge(message.sender)}</b><p>${esc(message.text)}</p><small>${when(message.createdAt)} ${(message.reactions||[]).length ? `· ♥ ${(message.reactions||[]).length}` : ''}</small></article>`).join('') || '<p class="empty-profile">No messages yet — start the conversation.</p>'; const chat = group.isMember ? `<section class="group-chat"><h2>Group conversation</h2><div class="group-message-list" id="group-messages-${group._id}">${messages}</div><form data-group-message="${group._id}" class="group-compose"><input maxlength="1000" required placeholder="Message ${esc(group.name)}"><button class="small-post">Send</button></form></section>` : '<p class="group-chat-locked">Join this group to take part in the conversation.</p>'; const add = group.isOwner ? `<section class="group-add-members"><h2>Add members</h2><div id="group-suggestions-${group._id}"><button class="text-link" data-load-suggestions="${group._id}">Suggest people to add</button></div></section>` : ''; $('#group-detail').innerHTML = `<div class="group-detail-cover"${image}></div><h1>${esc(group.name)}</h1><p>${esc(group.description)}</p><p><b>${esc(group.owner?.name || 'Lion Link member')}</b> created this ${group.privacy} group on ${new Date(group.createdAt).toLocaleDateString()}.</p>${approve}${membershipAction}${deleteAction}${chat}<details class="group-members-menu"><summary>Members (${group.memberCount || 0})</summary><div class="group-members">${members}</div></details>${add}`; show('group'); } catch (error) { toast(error.message); } }
   document.addEventListener('click', event => { const card = event.target.closest('[data-open-group]'); if (card && !event.target.closest('[data-join-group],[data-leave-group],[data-delete-group],[data-approve-group]')) openGroup(card.dataset.openGroup); }, true);
@@ -886,10 +910,13 @@ renderPosts = function() {
     applyCropBoxStyle();
   };
 
-  const openCrop = index => {
-    const media = selectedMedia[index];
+  // Exposed on window rather than declared with const: chat and group
+  // covers call this from separate IIFEs that don't share this file's
+  // local scope, the same issue MAX_UPLOAD_BYTES had.
+  let cropOnApply = null;
+  window.openCropFor = (media, onApply) => {
     if (!media || media.type !== 'image') return;
-    cropTarget = index;
+    cropOnApply = onApply;
     const localFile = cropSources.get(media);
     // Cropping the local, pre-upload copy avoids ever loading a remote,
     // cross-origin image into the canvas at all — sidestepping the CORS
@@ -909,6 +936,10 @@ renderPosts = function() {
     };
     crop.image.src = source;
   };
+  const openCrop = index => {
+    const media = selectedMedia[index];
+    openCropFor(media, newMedia => { selectedMedia[index] = newMedia; renderSelectedMedia(); });
+  };
 
   const renderSelectedMedia = () => {
     $('#media-preview').hidden = !selectedMedia.length;
@@ -917,9 +948,12 @@ renderPosts = function() {
 
   $('#media-input').onchange = async event => {
     try {
-      selectedMedia = await Promise.all([...event.target.files].slice(0, 8).filter(file => file.size < 5 * 1024 * 1024).map(fileData));
+      const files = [...event.target.files].slice(0, 8);
+      const usable = files.filter(file => file.size <= MAX_UPLOAD_BYTES);
+      selectedMedia = await Promise.all(usable.map(fileData));
       renderSelectedMedia();
       if (event.target.files.length > 8) toast('Only the first 8 files were selected.');
+      if (usable.length < files.length) toast('One or more files were over 60 MB and were skipped.');
     } catch { toast('That media could not be read.'); }
   };
   document.addEventListener('click', event => {
@@ -978,7 +1012,7 @@ renderPosts = function() {
   const releaseCropObjectUrl = () => { if (crop._objectUrl) { URL.revokeObjectURL(crop._objectUrl); crop._objectUrl = null; } };
   $('#cancel-crop').onclick = () => { $('#crop-modal').hidden = true; releaseCropObjectUrl(); };
   $('#apply-crop').onclick = async () => {
-    if (cropTarget === null || !crop.image) return;
+    if (!cropOnApply || !crop.image) return;
     const applyButton = $('#apply-crop');
     const originalLabel = applyButton.textContent;
     applyButton.disabled = true; applyButton.textContent = 'Uploading…';
@@ -1002,8 +1036,7 @@ renderPosts = function() {
       const publicUrl = await uploadToR2(croppedFile);
       const newMedia = { url: publicUrl, type: 'image' };
       cropSources.set(newMedia, croppedFile);
-      selectedMedia[cropTarget] = newMedia;
-      renderSelectedMedia();
+      cropOnApply?.(newMedia);
       $('#crop-modal').hidden = true;
     } catch (error) {
       toast('That crop could not be saved. Please try again.');
@@ -1046,10 +1079,10 @@ renderPosts = function() {
     $('#trim-duration').textContent = `${formatTrimTime(trimState.start)} – ${formatTrimTime(trimState.end)}  ·  ${formatTrimTime(trimState.end - trimState.start)} selected`;
   };
 
-  const openTrim = index => {
-    const media = selectedMedia[index];
+  let trimOnApply = null;
+  window.openTrimFor = (media, onApply) => {
     if (!media || media.type !== 'video') return;
-    trimTarget = index;
+    trimOnApply = onApply;
     const localFile = cropSources.get(media);
     const source = localFile ? URL.createObjectURL(localFile) : media.url;
     trim._objectUrl = localFile ? source : null;
@@ -1060,6 +1093,10 @@ renderPosts = function() {
       applyTrimRangeStyle();
       updateTrimMeta();
     };
+  };
+  const openTrim = index => {
+    const media = selectedMedia[index];
+    openTrimFor(media, newMedia => { selectedMedia[index] = newMedia; renderSelectedMedia(); });
   };
   const trim = { _objectUrl: null };
   const releaseTrimObjectUrl = () => { if (trim._objectUrl) { URL.revokeObjectURL(trim._objectUrl); trim._objectUrl = null; } };
@@ -1127,7 +1164,7 @@ renderPosts = function() {
   }
 
   $('#apply-trim').onclick = async () => {
-    if (trimTarget === null) return;
+    if (!trimOnApply) return;
     const applyButton = $('#apply-trim');
     const originalLabel = applyButton.textContent;
     applyButton.disabled = true;
@@ -1139,8 +1176,7 @@ renderPosts = function() {
       const publicUrl = await uploadToR2(trimmedFile);
       const newMedia = { url: publicUrl, type: 'video' };
       cropSources.set(newMedia, trimmedFile);
-      selectedMedia[trimTarget] = newMedia;
-      renderSelectedMedia();
+      trimOnApply?.(newMedia);
       $('#trim-modal').hidden = true;
     } catch (error) {
       toast(error?.message === 'Video trimming is not supported in this browser.' ? error.message : 'That trim could not be saved. Please try again.');
@@ -1199,7 +1235,10 @@ renderPosts = function() {
     const box = document.getElementById('x-attach-preview');
     if (!box) return;
     box.classList.toggle('has-media', !!attachedMedia);
-    box.innerHTML = attachedMedia ? `<div class="chat-preview-item">${attachedMedia.type === 'video' ? `<video src="${attachedMedia.url}"></video>` : attachedMedia.type === 'audio' ? `<span style="display:grid;place-items:center;height:100%;font-size:22px">🎙</span>` : `<img src="${attachedMedia.url}" alt="Attachment preview">`}<button type="button" id="x-remove-attach" aria-label="Remove attachment">×</button></div>` : '';
+    const editButton = attachedMedia && attachedMedia.type !== 'audio'
+      ? `<button type="button" id="x-edit-attach">${attachedMedia.type === 'video' ? 'Trim' : 'Crop'}</button>`
+      : '';
+    box.innerHTML = attachedMedia ? `<div class="chat-preview-item">${attachedMedia.type === 'video' ? `<video src="${attachedMedia.url}"></video>` : attachedMedia.type === 'audio' ? `<span style="display:grid;place-items:center;height:100%;font-size:22px">🎙</span>` : `<img src="${attachedMedia.url}" alt="Attachment preview">`}${editButton}<button type="button" id="x-remove-attach" aria-label="Remove attachment">×</button></div>` : '';
   };
   const otherMember = c => c.members.find(member => String(member._id||member.id)!==String(me?.id)) || me;
   const mine = message => String(message.sender?._id||message.sender)===String(me?.id);
@@ -1216,7 +1255,7 @@ renderPosts = function() {
   const renderChat = () => { if(!activeChat)return renderWelcome(); const other=otherMember(activeChat); const rows=(activeChat.messages||[]).map(message=>{const own=mine(message),media=message.media?.url?`<div class="x-message-media">${message.media.type==='video'?`<video controls src="${message.media.url}"></video>`:message.media.type==='audio'?`<audio controls src="${message.media.url}"></audio>`:`<img src="${message.media.url}" alt="Message attachment">`}</div>`:'';const status=own?`<small class="x-status">${message.pending?'Sending':message.readAt?'Read':message.deliveredAt?'Delivered':'Sent'}</small>`:'';return `<article class="x-message ${own?'mine':''}">${own?'':avatar(other)}<div><div class="x-bubble">${media}${message.text?`<p>${esc(message.text)}</p>`:''}</div><time>${when(message.createdAt)} ${status}</time></div></article>`;}).join('')||'<p class="x-empty">Say hello to start the conversation.</p>';
     const presence = other.lastActiveAt && Date.now() - new Date(other.lastActiveAt).getTime() < 2 * 60 * 1000 ? 'Active now' : other.lastActiveAt ? `Last active ${when(other.lastActiveAt)} ago` : '';
     $('#x-chat-panel').innerHTML=`<header class="x-chat-header"><button type="button" data-x-back aria-label="Back to inbox">‹</button>${avatar(other)}<button class="x-chat-person" type="button" data-profile="${esc(other.username)}"><b>${esc(other.name)}${verifiedBadge(other)}</b><small>@${esc(other.username)}${presence ? ` · ${presence}` : ''}</small></button></header><section class="x-message-stream" id="x-message-stream">${rows}</section><form id="x-compose" class="x-compose"><button class="x-emoji" type="button" title="Add emoji" data-emoji>☺</button><label title="Attach photo or video"><span class="ui-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M21.44 11.05l-9.19 9.19a5.5 5.5 0 0 1-7.78-7.78l9.2-9.19a3.5 3.5 0 0 1 4.95 4.95l-9.2 9.19a1.5 1.5 0 0 1-2.12-2.12l8.49-8.48"/></svg></span><input id="x-media-input" type="file" accept="image/*,video/*" hidden></label><textarea id="x-message-input" maxlength="300" rows="1" placeholder="Start a new message"></textarea><button class="small-post" type="submit">Send</button></form><div id="x-attach-preview" class="chat-media-preview"></div>`;
-    const stream=$('#x-message-stream');stream.scrollTop=stream.scrollHeight; $('#x-media-input').onchange=async e=>{const file=e.target.files[0];if(!file)return;if(file.size>5*1024*1024)return toast('Attachments must be 5 MB or smaller.');try{attachedMedia=await fileData(file);renderAttachPreview();}catch{toast('That attachment could not be read.');}};
+    const stream=$('#x-message-stream');stream.scrollTop=stream.scrollHeight; $('#x-media-input').onchange=async e=>{const file=e.target.files[0];if(!file)return;if(file.size>MAX_UPLOAD_BYTES)return toast('That file is over 60 MB — please choose a smaller one.');try{attachedMedia=await fileData(file);renderAttachPreview();}catch{toast('That attachment could not be read.');}};
   };
   const renderMessages = () => { messagesView.innerHTML='<header class="page-header x-messages-header"><div><p class="eyebrow">PRIVATE CONVERSATIONS</p><h1>Messages</h1></div><button class="small-post" id="x-new-message" type="button">New message</button></header><div class="x-messages-shell"><aside class="x-inbox"><label class="x-search">⌕<input id="x-inbox-search" type="search" placeholder="Search messages or people"></label><div id="x-conversation-list"></div></aside><section class="x-chat" id="x-chat-panel"></section></div>';$('.x-messages-shell').classList.toggle('x-chat-open',!!activeChat);activeChat?renderChat():renderWelcome();$('#x-new-message').onclick=openNew;$('#x-inbox-search').oninput=e=>search(e.target.value); };
   const openNew = () => { requestNotifications(); $('#user-search-modal').hidden=false; $('#user-search-input').value=''; $('#user-search-results').innerHTML='<p class="empty-profile">Search registered Lion Link users.</p>'; $('#user-search-input').focus(); };
@@ -1224,7 +1263,12 @@ renderPosts = function() {
   loadChats = async function(){const result=await api('/conversations');const before=new Set(knownIncoming), previous=activeChat;conversations=(result.conversations||[]).sort((a,b)=>new Date(b.updatedAt)-new Date(a.updatedAt));conversations.forEach(c=>{const message=inboxLast(c);if(message&&!mine(message)&&!message.readAt){const key=`${c._id}:${message._id}`;if(knownIncoming.size&&!before.has(key)&&Notification.permission==='granted')new Notification(otherMember(c).name,{body:preview(message),tag:key});knownIncoming.add(key);}});if(previous){const summary=conversations.find(c=>c._id===previous._id);activeChat=summary?{...summary,messages:previous.messages||[]}:null;}renderMessages();};
   openChat = async id => { const summary=conversations.find(c=>c._id===id);if(!summary)return;activeChat={...summary,messages:activeChat?._id===id?activeChat.messages||[]:[]};show('messages');persist();renderMessages();try{const {conversation}=await api(`/conversations/${id}?limit=50`);if(activeChat?._id!==id)return;activeChat=conversation;renderMessages();if(unreadCount(summary)){await api(`/conversations/${id}/read`,{method:'POST'});activeChat.messages.forEach(message=>{if(!mine(message))message.readAt=new Date().toISOString();});await loadChats();}}catch(error){toast(error.message);}};
   const startDM = async username => {try{const {conversation}=await api('/conversations',{method:'POST',body:JSON.stringify({username}),showLoading:true});await loadChats();$('#user-search-modal').hidden=true;await openChat(conversation._id);}catch(error){toast(error.message);}};
-  document.addEventListener('click',e=>{const chat=e.target.closest('[data-x-chat]');if(chat&&!e.target.closest('[data-profile]')){e.preventDefault();openChat(chat.dataset.xChat);}if(e.target.closest('[data-x-back]')){activeChat=null;persist();renderMessages();}if(e.target.closest('[data-new-dm]'))openNew();const start=e.target.closest('[data-start-dm]');if(start)startDM(start.dataset.startDm);if(e.target.closest('[data-emoji]')){$('#x-message-input').value+='😊';$('#x-message-input').focus();}if(e.target.id==='x-remove-attach'){attachedMedia=null;renderAttachPreview();const input=document.getElementById('x-media-input');if(input)input.value='';}},true);
+  document.addEventListener('click',e=>{const chat=e.target.closest('[data-x-chat]');if(chat&&!e.target.closest('[data-profile]')){e.preventDefault();openChat(chat.dataset.xChat);}if(e.target.closest('[data-x-back]')){activeChat=null;persist();renderMessages();}if(e.target.closest('[data-new-dm]'))openNew();const start=e.target.closest('[data-start-dm]');if(start)startDM(start.dataset.startDm);if(e.target.closest('[data-emoji]')){$('#x-message-input').value+='😊';$('#x-message-input').focus();}if(e.target.id==='x-remove-attach'){attachedMedia=null;renderAttachPreview();const input=document.getElementById('x-media-input');if(input)input.value='';}
+if(e.target.id==='x-edit-attach'&&attachedMedia){
+  if(attachedMedia.type==='image')openCropFor(attachedMedia,newMedia=>{attachedMedia=newMedia;renderAttachPreview();});
+  else if(attachedMedia.type==='video')openTrimFor(attachedMedia,newMedia=>{attachedMedia=newMedia;renderAttachPreview();});
+}
+},true);
   document.addEventListener('submit',async e=>{if(e.target.id!=='x-compose')return;e.preventDefault();if(!activeChat||sending)return;const input=$('#x-message-input'),text=input.value.trim();if(!text&&!attachedMedia)return;const chatId=activeChat._id, media=attachedMedia, pending={_id:`pending-${Date.now()}`,sender:me.id,text,media,createdAt:new Date().toISOString(),pending:true};sending=true;const send=e.target.querySelector('[type="submit"]');send.disabled=true;attachedMedia=null;renderAttachPreview();input.value='';activeChat.messages.push(pending);conversations=[activeChat,...conversations.filter(c=>c._id!==chatId)];renderMessages();try{await api(`/conversations/${chatId}/messages`,{method:'POST',body:JSON.stringify({text,media}),showLoading:true});await loadChats();await openChat(chatId);}catch(error){activeChat.messages=activeChat.messages.filter(message=>message._id!==pending._id);renderMessages();toast(error.message);}finally{sending=false;const current=$('#x-compose [type="submit"]');if(current)current.disabled=false;}},true);
   document.addEventListener('keydown',event=>{if(event.target.id==='x-message-input'&&event.key==='Enter'&&!event.shiftKey){event.preventDefault();event.target.closest('form')?.requestSubmit();}});
   document.addEventListener('keydown',event=>{const row=event.target.closest('[data-x-chat],[data-start-dm]');if(row&&(event.key==='Enter'||event.key===' ')){event.preventDefault();row.dataset.xChat?openChat(row.dataset.xChat):startDM(row.dataset.startDm);}});
@@ -1374,3 +1418,20 @@ renderPosts = function() {
     });
   }, { passive: true });
 })();
+
+// Tapping an already-selected photo or video (before posting or sending)
+// opens the same full-size viewer used for already-posted media, instead
+// of doing nothing. Buttons inside the same tile (Crop, Trim, Remove) are
+// excluded so they keep their own separate behaviour.
+document.addEventListener('click', event => {
+  const tile = event.target.closest('#media-preview > div, #quick-post-preview > div, #announcement-preview > div, #group-cover-preview > div, #x-attach-preview .chat-preview-item');
+  if (!tile || event.target.closest('button')) return;
+  const img = tile.querySelector('img'), video = tile.querySelector('video');
+  if (img) {
+    $('#media-modal-content').innerHTML = `<div class="modal-media"><img src="${img.src}" alt="Selected media"></div>`;
+    $('#media-modal').hidden = false;
+  } else if (video) {
+    $('#media-modal-content').innerHTML = `<div class="modal-media"><video controls autoplay src="${video.src}"></video></div>`;
+    $('#media-modal').hidden = false;
+  }
+});
