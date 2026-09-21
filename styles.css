@@ -2616,3 +2616,25 @@ body.dark .x-compose textarea { background:#000; color:#fff; }
   font-size: 11px;
   font-weight: 700;
 }
+
+/* Chat attachment preview: the Crop/Trim button and the Remove button
+   would otherwise both land on the exact same top-right spot, the same
+   overlap bug the composer's preview had. Also sized up slightly so a
+   small text button and a circular remove button both fit comfortably. */
+#x-attach-preview .chat-preview-item {
+  width: 84px;
+  height: 84px;
+}
+#x-attach-preview .chat-preview-item button:not(#x-remove-attach) {
+  position: absolute;
+  left: 3px;
+  right: auto;
+  top: auto;
+  bottom: 3px;
+  width: auto;
+  height: auto;
+  padding: 2px 7px;
+  border-radius: 6px;
+  font-size: 10px;
+  font-weight: 700;
+}
