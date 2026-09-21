@@ -168,8 +168,28 @@ $('#close-reels').onclick=()=>$('#reels-modal').hidden=true;$('#reel-prev').oncl
 document.addEventListener('click',event=>{if(event.target.matches('.post-media video')){event.preventDefault();openReel(event.target.currentSrc||event.target.src)}});
 
 function mediaPreview(items, container){const el=$(container);el.hidden=!items.length;el.innerHTML=items.map(m=>m.type==='video'?`<video controls src="${m.url}"></video>`:`<img src="${m.url}" alt="Selected media">`).join('');}
-$('#quick-post-media').onchange=async e=>{quickMedia=await Promise.all([...e.target.files].slice(0,8).map(fileData));mediaPreview(quickMedia,'#quick-post-preview');};
-$('#quick-post-form').onsubmit=async e=>{e.preventDefault();const text=$('#quick-post-text').value.trim();if(!text&&!quickMedia.length)return;try{await api('/posts',{method:'POST',body:JSON.stringify({text,media:quickMedia})});e.target.reset();quickMedia=[];mediaPreview(quickMedia,'#quick-post-preview');$('#quick-post-modal').hidden=true;await loadPosts();window.scrollTo({top:0,behavior:'smooth'});toast('Your post is live!');}catch(error){toast(error.message);}};
+function renderQuickMedia(){
+  $('#quick-post-preview').hidden = !quickMedia.length;
+  $('#quick-post-preview').innerHTML = quickMedia.map((item, index) => `<div>${item.type === 'video' ? `<video src="${item.url}"></video>` : `<img src="${item.url}" alt="Selected image">`}${item.type === 'image' ? `<button type="button" data-quick-crop="${index}">Crop</button>` : ''}${item.type === 'video' ? `<button type="button" data-quick-trim="${index}">Trim</button>` : ''}<button type="button" data-quick-remove="${index}" aria-label="Remove media">×</button></div>`).join('');
+}
+$('#quick-post-media').onchange=async e=>{
+  const files=[...e.target.files].slice(0,8);
+  const usable=files.filter(file=>file.size<=MAX_UPLOAD_BYTES);
+  try{
+    quickMedia=await Promise.all(usable.map(fileData));
+    renderQuickMedia();
+    if(usable.length<files.length) toast('One or more files were over 60 MB and were skipped.');
+  }catch{ toast('That media could not be read.'); }
+};
+document.addEventListener('click', event => {
+  const cropBtn = event.target.closest('[data-quick-crop]');
+  if (cropBtn) { event.preventDefault(); const i = Number(cropBtn.dataset.quickCrop); openCropFor(quickMedia[i], newMedia => { quickMedia[i] = newMedia; renderQuickMedia(); }); return; }
+  const trimBtn = event.target.closest('[data-quick-trim]');
+  if (trimBtn) { event.preventDefault(); const i = Number(trimBtn.dataset.quickTrim); openTrimFor(quickMedia[i], newMedia => { quickMedia[i] = newMedia; renderQuickMedia(); }); return; }
+  const removeBtn = event.target.closest('[data-quick-remove]');
+  if (removeBtn) { event.preventDefault(); quickMedia.splice(Number(removeBtn.dataset.quickRemove), 1); renderQuickMedia(); }
+}, true);
+$('#quick-post-form').onsubmit=async e=>{e.preventDefault();const text=$('#quick-post-text').value.trim();if(!text&&!quickMedia.length)return;try{await api('/posts',{method:'POST',body:JSON.stringify({text,media:quickMedia})});e.target.reset();quickMedia=[];renderQuickMedia();$('#quick-post-modal').hidden=true;await loadPosts();window.scrollTo({top:0,behavior:'smooth'});toast('Your post is live!');}catch(error){toast(error.message);}};
 $('#announcement-media').onchange=async e=>{announcementMedia=await Promise.all([...e.target.files].slice(0,8).map(fileData));mediaPreview(announcementMedia,'#announcement-preview');};
 $('#announcement-form').onsubmit=async event=>{event.preventDefault();try{await api('/announcements',{method:'POST',body:JSON.stringify({title:$('#announcement-title').value,body:$('#announcement-body').value,media:announcementMedia})});event.target.reset();announcementMedia=[];mediaPreview(announcementMedia,'#announcement-preview');await loadAnnouncements();toast('Announcement published.')}catch(error){toast(error.message)}};
 function personMarkup(user){const avatar=user.profileImage?`style="background-image:url('${user.profileImage}');background-size:cover"`:'';const ring=stories.some(s=>s.author?.username===user.username)?'has-story':'';const isFollowing=user.isFollowing||followedUsernames?.has(user.username);return `<div class="person"><button class="avatar avatar-gold ${ring}" data-avatar="${user.username}" ${avatar}>${user.profileImage?'':initials(user.name)}</button><div><strong class="profile-name" data-profile="${user.username}">${esc(user.name)}</strong><small>@${esc(user.username)}</small></div>${isFollowing?'':`<button class="follow-small" data-follow="${user.username}">Follow</button>`}</div>`;}
@@ -644,7 +664,7 @@ $('#quick-post-form').onsubmit = async event => {
   const submit = event.target.querySelector('[type="submit"], .small-post'); submit.disabled = true;
   try {
     await api('/posts', { method: 'POST', body: JSON.stringify({ text, media: quickMedia }) });
-    event.target.reset(); quickMedia = []; mediaPreview([], '#quick-post-preview');
+    event.target.reset(); quickMedia = []; renderQuickMedia();
     $('#quick-post-modal').hidden = true; await loadPosts(); toast('Your post is live!');
   } catch (error) { toast(error.message); }
   finally { quickPosting = false; submit.disabled = false; }
