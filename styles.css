@@ -2638,3 +2638,26 @@ body.dark .x-compose textarea { background:#000; color:#fff; }
   font-size: 10px;
   font-weight: 700;
 }
+
+/* Mobile bottom-nav message badge — this element never existed before, so
+   it never had any styling either. Positioned as a small corner badge over
+   the Messages icon, matching how the desktop sidebar's badge reads. */
+.bottom-nav button {
+  position: relative;
+}
+.bottom-nav-message-count {
+  position: absolute;
+  top: 2px;
+  right: 12px;
+  display: inline-grid;
+  place-items: center;
+  min-width: 15px;
+  height: 15px;
+  padding: 0 3px;
+  border-radius: 999px;
+  background: #c7352a;
+  color: #fff;
+  font-size: 9px;
+  font-style: normal;
+  line-height: 1;
+}
