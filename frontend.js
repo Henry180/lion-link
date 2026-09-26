@@ -1268,7 +1268,14 @@ renderPosts = function() {
   const inboxLast = conversation => conversation.lastMessage || conversation.messages?.at(-1);
   const unreadCount = c => c.unreadCount ?? ((inboxLast(c) && !mine(inboxLast(c)) && !inboxLast(c).readAt) ? 1 : 0);
   const persist = () => localStorage.setItem('lionLinkViewState', JSON.stringify({ view: document.querySelector('.view.active')?.id?.replace(/-view$/, '') || 'feed', chat: activeChat?._id || null }));
-  const updateBadge = () => { const total=conversations.reduce((sum,c)=>sum+unreadCount(c),0), badge=$('#message-count'); if(badge){badge.hidden=!total;badge.textContent=total>99?'99+':total;} };
+  const updateBadge = () => {
+    const total=conversations.reduce((sum,c)=>sum+unreadCount(c),0);
+    const label = total>99?'99+':total;
+    // The desktop sidebar and the mobile bottom nav are two separate
+    // elements (the mobile one never had anywhere to show this at all) —
+    // both need updating, not just whichever one happens to be visible.
+    document.querySelectorAll('#message-count, .bottom-nav-message-count').forEach(badge => { badge.hidden=!total; badge.textContent=label; });
+  };
   const requestNotifications = () => { if ('Notification' in window && Notification.permission==='default') Notification.requestPermission(); };
   const renderInbox = () => { const target=$('#x-conversation-list'); if(!target)return; target.innerHTML=conversations.map(c=>{const other=otherMember(c),last=inboxLast(c),unread=unreadCount(c);return `<div class="x-conversation ${activeChat?._id===c._id?'selected':''} ${unread?'unread':''}" role="button" tabindex="0" data-x-chat="${c._id}">${avatar(other)}<span><b>${esc(other.name)}${verifiedBadge(other)}</b><small>@${esc(other.username)}</small><p>${esc(preview(last))}</p></span><span class="x-conversation-meta"><time>${last?.createdAt?when(last.createdAt):''}</time>${unread?`<i>${unread>99?'99+':unread}</i>`:''}</span></div>`;}).join('')||'<p class="x-empty">No messages yet. Search for a Lion Link member to start one.</p>'; updateBadge(); };
   const renderWelcome = () => { $('#x-chat-panel').innerHTML='<section class="x-welcome"><span>✉</span><h2>Your messages</h2><p>Select a conversation or start a new private message.</p><button type="button" class="small-post" data-new-dm>Write a message</button></section>'; renderInbox(); };
@@ -1360,13 +1367,13 @@ if(e.target.id==='x-edit-attach'&&attachedMedia){
 // Keep DM alerts separate from general notifications and open sent media in the viewer.
 (() => {
   const refreshMessageBadge = () => {
-    const badge = document.querySelector('#message-count');
-    if (!badge || !Array.isArray(conversations) || !me) return;
+    if (!Array.isArray(conversations) || !me) return;
     const total = conversations.reduce((count, conversation) => {
       const last = conversation.lastMessage || conversation.messages?.at(-1);
       return count + (last && String(last.sender?._id || last.sender) !== String(me.id) && !last.readAt ? 1 : 0);
     }, 0);
-    badge.hidden = !total; badge.textContent = total > 99 ? '99+' : total;
+    const label = total > 99 ? '99+' : total;
+    document.querySelectorAll('#message-count, .bottom-nav-message-count').forEach(badge => { badge.hidden = !total; badge.textContent = label; });
   };
   const notificationsWithoutOverwritingMessages = loadNotifications;
   loadNotifications = async function() { try { return await notificationsWithoutOverwritingMessages(); } finally { refreshMessageBadge(); } };
