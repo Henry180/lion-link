@@ -12,6 +12,14 @@ const MAX_UPLOAD_BYTES = 60 * 1024 * 1024;
 let token = localStorage.getItem('lionLinkToken');
 let me = null, posts = [], announcements = [], conversations = [], activeChat = null, selectedMedia = [], stories=[], viewedProfile=null, quickMedia=[], announcementMedia=[];
 const esc = value => { const el=document.createElement('div'); el.textContent=value||''; return el.innerHTML; };
+// Turns bare URLs into safe, clickable links. Used only for official
+// announcement bodies (see loadAnnouncements) — post text always goes
+// through esc() alone, so links typed into regular posts stay plain,
+// non-clickable text.
+const linkify = value => esc(value).replace(/((?:https?:\/\/|www\.)[^\s<]+)/g, match => {
+  const href = match.startsWith('http') ? match : `https://${match}`;
+  return `<a href="${href}" target="_blank" rel="noopener noreferrer">${match}</a>`;
+});
 const initials = name => String(name||'?').split(' ').map(x=>x[0]).slice(0,2).join('').toUpperCase();
 const when = date => { const s=Math.max(0,Math.floor((Date.now()-new Date(date))/1000)); return s<60?`${s}s`:s<3600?`${Math.floor(s/60)}m`:s<86400?`${Math.floor(s/3600)}h`:`${Math.floor(s/86400)}d`; };
 function toast(message){const el=$('#toast');el.textContent=message;el.classList.add('show');setTimeout(()=>el.classList.remove('show'),2500)}
@@ -46,7 +54,7 @@ function renderProfile(user){if(!user)return;const own=user.username===me?.usern
 const renderProfileBase = renderProfile;
 renderProfile = function(user){renderProfileBase(user);if(user)$('#profile-name').innerHTML=`${esc(user.name)}${verifiedBadge(user)}`;};
 async function openProfile(username){if(username===me.username){renderProfile(me);show('profile');return;}try{const {user}=await api('/users/'+encodeURIComponent(username));renderProfile(user);show('profile');}catch(error){toast(error.message);}}
-async function loadAnnouncements(){announcements=(await api('/announcements')).announcements;const attachment=a=>(a.media||[]).map(m=>m.type==='video'?`<video class="announcement-media" controls src="${m.url}"></video>`:`<img class="announcement-media" src="${m.url}" alt="Announcement media">`).join('');$('#announcement-list').innerHTML=announcements.map(a=>`<article class="announcement-card"><div class="date">${new Date(a.createdAt).toLocaleDateString()}</div><div><span class="official-label">LION LINK ADMIN ${verifiedBadge({role:'admin'})}</span><h3>${esc(a.title)}</h3><p>${esc(a.body)}</p>${attachment(a)}</div></article>`).join('')||'<p class="empty-profile">No announcements yet.</p>';$('#admin-announcements').innerHTML=announcements.map(a=>`<article class="admin-announcement"><div><b>${esc(a.title)}</b><p>${esc(a.body)}</p>${attachment(a)}</div><button data-remove-announcement="${a._id}">Remove</button></article>`).join('');}
+async function loadAnnouncements(){announcements=(await api('/announcements')).announcements;const attachment=a=>(a.media||[]).map(m=>m.type==='video'?`<video class="announcement-media" controls src="${m.url}"></video>`:`<img class="announcement-media" src="${m.url}" alt="Announcement media">`).join('');$('#announcement-list').innerHTML=announcements.map(a=>`<article class="announcement-card"><div class="date">${new Date(a.createdAt).toLocaleDateString()}</div><div><span class="official-label">LION LINK ADMIN ${verifiedBadge({role:'admin'})}</span><h3>${esc(a.title)}</h3><p>${linkify(a.body)}</p>${attachment(a)}</div></article>`).join('')||'<p class="empty-profile">No announcements yet.</p>';$('#admin-announcements').innerHTML=announcements.map(a=>`<article class="admin-announcement"><div><b>${esc(a.title)}</b><p>${esc(a.body)}</p>${attachment(a)}</div><button data-remove-announcement="${a._id}">Remove</button></article>`).join('');}
 async function loadChats(){conversations=(await api('/conversations')).conversations;$('#conversations').innerHTML=conversations.map(c=>{const other=c.members.find(x=>(x._id||x.id)!==me.id)||me,last=c.messages.at(-1);return `<button class="conversation" data-chat="${c._id}"><div class="avatar avatar-gold">${initials(other.name)}</div><div><strong>${esc(other.name)}</strong><p>${esc(last?.text||(last?.media?'📎 Media':'Start a conversation'))}</p></div></button>`}).join('')||'<p class="empty-profile">No messages yet. Click a user’s avatar to start one.</p>';}
 function openChat(id){activeChat=conversations.find(c=>c._id===id);if(!activeChat)return;const other=activeChat.members.find(x=>(x._id||x.id)!==me.id)||me;const messageMarkup=m=>{const mine=(m.sender?._id||m.sender)===me.id,media=m.media?.url?`<div class="message-media">${m.media.type==='video'?`<video controls src="${m.media.url}"></video>`:`<img src="${m.media.url}" alt="Message attachment">`}</div>`:'';return `<div class="message-row ${mine?'mine':''}"><div class="bubble">${media}${m.text?`<div class="message-text">${esc(m.text)}</div>`:''}</div></div>`};$('#chat-empty').hidden=true;$('#active-chat').hidden=false;$('#active-chat').innerHTML=`<header class="chat-header"><div class="avatar avatar-gold">${initials(other.name)}</div><div><strong>${esc(other.name)}</strong><small>@${esc(other.username)}</small></div></header><div class="messages" id="messages">${activeChat.messages.map(messageMarkup).join('')}</div><form class="chat-compose" id="chat-form"><input maxlength="300" placeholder="Write a message…"><label class="chat-media-picker" title="Attach image or video">📎<input id="chat-media-input" type="file" accept="image/*,video/*" hidden></label><button class="chat-send" type="submit" aria-label="Send message">➤</button></form>`;let chatMedia=null;$('#chat-media-input').onchange=async e=>{const file=e.target.files[0];if(!file)return;if(file.size>5*1024*1024){e.target.value='';return toast('Attachments must be 5 MB or smaller.')}try{chatMedia=await fileData(file);toast('Attachment ready to send.')}catch{toast('That attachment could not be read.')}};$('#chat-form').onsubmit=async e=>{e.preventDefault();const text=e.target.elements[0].value.trim();if(!text&&!chatMedia)return;try{await api(`/conversations/${id}/messages`,{method:'POST',body:JSON.stringify({text,media:chatMedia})});await loadChats();openChat(id)}catch(error){toast(error.message)}};}
 function loginMode(){const signup=$('#login-mode').value==='signup';$('#login-name-field').hidden=!signup;$('#login-username-field').hidden=!signup;$('#login-email').placeholder=signup?'your@email.com':'email or username';}
@@ -1462,3 +1470,48 @@ document.addEventListener('click', event => {
     $('#media-modal').hidden = false;
   }
 });
+
+// Give every view — and every profile — its own real, shareable browser
+// address instead of the whole app living behind one single URL. This
+// wraps the final version of show() (after every other layer above has
+// had its turn), so pushState fires no matter which view fired.
+//
+// NOTE: this makes each screen linkable/bookmarkable and fixes back/forward,
+// but it does not by itself make individual posts or profiles indexable by
+// Google — that requires the SERVER (the API behind API_URL, or a small
+// Cloudflare Pages Function) to return unique <title>/<meta> tags for these
+// paths when a crawler requests them directly, with no JS executed. That
+// part has to live server-side; this file only controls what the browser's
+// address bar shows once a person is already using the app.
+(() => {
+  const pathForView = view => {
+    if (view === 'profile') {
+      const user = viewedProfile || me;
+      if (user?.username) return `/profile/${user.username}`;
+    }
+    return view === 'feed' ? '/' : `/${view}`;
+  };
+
+  const priorShow = show;
+  show = function(view) {
+    priorShow(view);
+    const path = pathForView(view);
+    if (location.pathname !== path) {
+      history.pushState({ view }, '', path);
+    }
+  };
+
+  const viewForPath = path => {
+    const known = ['profile', 'messages', 'announcements', 'groups', 'group', 'events', 'admin', 'notifications', 'feed'];
+    const segment = path.replace(/^\//, '').split('/')[0];
+    if (segment === '') return 'feed';
+    if (segment === 'profile') return 'profile';
+    return known.includes(segment) ? segment : 'feed';
+  };
+
+  // Back/forward buttons: read the view straight from the URL rather than
+  // going through show() again (which would just push the same state back).
+  window.addEventListener('popstate', () => {
+    priorShow(viewForPath(location.pathname));
+  });
+})();
