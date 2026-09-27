@@ -49,6 +49,29 @@ const followersList = async (req, res) => {
 router.get("/:username/followers", auth, followersList);
 router.get("/:username/following", auth, followersList);
 
+// =====================================================
+// PUBLIC PROFILE PREVIEW (no login required)
+// =====================================================
+// GET /:username below requires auth and also carries follow-relationship
+// data that shouldn't be handed to an anonymous caller. This route exists
+// purely for the Cloudflare Pages Function at functions/profile/[username].js
+// (and anything else that needs a profile's basic public info without a
+// signed-in session) — it deliberately returns only the small, safe subset
+// of fields a meta tag/link preview actually needs.
+router.get("/:username/preview", async (req, res) => {
+  const username = String(req.params.username).toLowerCase().replace(/^@/, "");
+  const user = await User.findOne({ username }).select("name username bio profileImage");
+  if (!user) return res.status(404).json({ message: "User not found" });
+  res.set("Cache-Control", "public, max-age=60").json({
+    user: {
+      name: user.name,
+      username: user.username,
+      bio: user.bio,
+      profileImage: user.profileImage
+    }
+  });
+});
+
 router.get("/:username", auth, async (req, res) => {
   const username = String(req.params.username).toLowerCase().replace(/^@/, "");
   const [user, viewer] = await Promise.all([
