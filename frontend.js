@@ -10,6 +10,14 @@ const $ = s => document.querySelector(s);
 // inside any one IIFE, since both the composer and chat need it.
 const MAX_UPLOAD_BYTES = 60 * 1024 * 1024;
 let token = localStorage.getItem('lionLinkToken');
+// Skip the visible "flash" of the login screen for a returning, already
+// logged-in person: hide it immediately based on the saved token alone,
+// before the async /auth/me check even starts (see the IIFE further down
+// this file). If that check later finds the session actually expired, the
+// existing error handling there shows the login screen again at that
+// point — this only removes the pointless flash for a session that's
+// still valid, which is the common case.
+if (token) document.querySelector('#login-overlay')?.classList.add('hidden');
 let me = null, posts = [], announcements = [], conversations = [], activeChat = null, selectedMedia = [], stories=[], viewedProfile=null, quickMedia=[], announcementMedia=[];
 const esc = value => { const el=document.createElement('div'); el.textContent=value||''; return el.innerHTML; };
 // Turns bare URLs into safe, clickable links. Used only for official
