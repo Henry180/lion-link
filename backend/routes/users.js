@@ -67,7 +67,15 @@ router.get("/:username/preview", async (req, res) => {
       name: user.name,
       username: user.username,
       bio: user.bio,
-      profileImage: user.profileImage
+      // A handful of early accounts still have their photo stored as a raw
+      // base64 data: URI from before uploads went through R2 (see
+      // uploadToR2 in frontend.js). Link-preview bots (WhatsApp, Twitter,
+      // iMessage, etc.) don't support data: URIs for og:image at all, so
+      // sending one doesn't just bloat the page — it silently breaks the
+      // preview. Omitting it here is safer than sending a broken image;
+      // once that user re-saves their photo through Edit Profile, it'll
+      // go through uploadToR2() and become a real URL automatically.
+      profileImage: user.profileImage?.startsWith("data:") ? null : user.profileImage
     }
   });
 });
