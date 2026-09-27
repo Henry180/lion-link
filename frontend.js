@@ -153,7 +153,7 @@ $('.message-profile').onclick=async()=>{const user=viewedProfile;if(!user)return
 $('.follow-profile').onclick=async()=>{const user=viewedProfile;if(!user)return;try{const result=await api(`/users/${encodeURIComponent(user.username)}/follow`,{method:'POST'});user.isFollowing=result.following;user.followers=result.followers;renderProfile(user);toast(result.following?'Following user':'Unfollowed user');}catch(error){toast(error.message);}};
 async function uploadStory(file){if(!file)return;try{await api('/stories',{method:'POST',body:JSON.stringify({media:await fileData(file)})});await loadStories();toast('Story posted for 24 hours.');}catch(error){toast(error.message);}}
 $('#profile-story-upload')?.addEventListener('change',e=>uploadStory(e.target.files[0]));
-document.addEventListener('click',async event=>{const d=event.target.dataset;if(d.removeMedia!==undefined){selectedMedia.splice(+d.removeMedia,1);event.target.closest('div').remove();}if(d.menu){const menu=$('#menu-'+d.menu);menu.hidden=!menu.hidden;}if(d.commentLike){const [postId,commentId]=d.commentLike.split(':');try{await api(`/posts/${postId}/comments/${commentId}/like`,{method:'POST'});await loadPosts({silent:true});const box=$('#comments-'+postId);if(box)box.hidden=false;}catch(error){toast(error.message)}}if(d.replyTo){const [postId,commentId]=d.replyTo.split(':');const form=document.querySelector(`[data-comment-form="${postId}"]`);if(form){form.dataset.replyTo=commentId;form.elements[0].placeholder='Write a reply…';form.elements[0].focus();}}if(d.share){const post=posts.find(p=>p._id===d.share),text=`${post.author?.name||'Lion Link user'} on Lion Link: ${post.text||''}`;try{if(navigator.share)await navigator.share({title:'Lion Link',text,url:location.href+'#post-'+post._id});else{await navigator.clipboard.writeText(text+' '+location.href);toast('Post text and Lion Link link copied.')}}catch{}}});
+document.addEventListener('click',async event=>{const d=event.target.dataset;if(d.removeMedia!==undefined){selectedMedia.splice(+d.removeMedia,1);event.target.closest('div').remove();}if(d.menu){const menu=$('#menu-'+d.menu);menu.hidden=!menu.hidden;}if(d.commentLike){const [postId,commentId]=d.commentLike.split(':');try{await api(`/posts/${postId}/comments/${commentId}/like`,{method:'POST'});await loadPosts({silent:true});const box=$('#comments-'+postId);if(box)box.hidden=false;}catch(error){toast(error.message)}}if(d.replyTo){const [postId,commentId]=d.replyTo.split(':');const form=document.querySelector(`[data-comment-form="${postId}"]`);if(form){form.dataset.replyTo=commentId;form.elements[0].placeholder='Write a reply…';form.elements[0].focus();}}if(d.share){const post=posts.find(p=>p._id===d.share),text=`${post.author?.name||'Lion Link user'} on Lion Link: ${post.text||''}`,shareUrl=`${location.origin}/post/${post._id}`;try{if(navigator.share)await navigator.share({title:'Lion Link',text,url:shareUrl});else{await navigator.clipboard.writeText(text+' '+shareUrl);toast('Post text and Lion Link link copied.')}}catch{}}});
 let reelVideos=[], reelIndex=0;
 // Comment author photos and names always open that member's profile.
 document.addEventListener('click', event => {
@@ -1471,18 +1471,19 @@ document.addEventListener('click', event => {
   }
 });
 
-// Give every view — and every profile — its own real, shareable browser
-// address instead of the whole app living behind one single URL. This
-// wraps the final version of show() (after every other layer above has
-// had its turn), so pushState fires no matter which view fired.
+// Give every view — and every profile, and now every post — its own real,
+// shareable browser address instead of the whole app living behind one
+// single URL. This wraps the final version of show() (after every other
+// layer above has had its turn), so pushState fires no matter which view
+// fired.
 //
 // NOTE: this makes each screen linkable/bookmarkable and fixes back/forward,
-// but it does not by itself make individual posts or profiles indexable by
-// Google — that requires the SERVER (the API behind API_URL, or a small
-// Cloudflare Pages Function) to return unique <title>/<meta> tags for these
-// paths when a crawler requests them directly, with no JS executed. That
-// part has to live server-side; this file only controls what the browser's
-// address bar shows once a person is already using the app.
+// and (together with the Cloudflare Pages Functions at functions/profile/
+// [username].js and functions/post/[id].js) gives a profile or post its own
+// accurate title/description for search results and link previews. Full
+// post/profile TEXT still isn't crawlable by Google, since the whole app
+// sits behind the login overlay — that would need some content to be
+// viewable without an account.
 (() => {
   const pathForView = view => {
     if (view === 'profile') {
@@ -1501,17 +1502,54 @@ document.addEventListener('click', event => {
     }
   };
 
+  // Opens a single post directly from its own URL. Fetches it from the API
+  // if it isn't already sitting in the loaded feed (a fresh page load, or a
+  // link someone else shared, won't have it yet).
+  async function openPostFromPath(id) {
+    priorShow('feed');
+    let post = posts.find(item => item._id === id);
+    if (!post) {
+      try {
+        const result = await api(`/posts/${id}`);
+        post = result.post;
+        if (post) { posts = [post, ...posts.filter(item => item._id !== id)]; renderPosts(); }
+      } catch {
+        return; // Unknown or removed post — leave the normal feed showing.
+      }
+    }
+    requestAnimationFrame(() => {
+      document.getElementById(`post-${id}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      const thread = document.getElementById(`comments-${id}`);
+      if (thread) thread.hidden = false;
+    });
+  }
+
   const viewForPath = path => {
-    const known = ['profile', 'messages', 'announcements', 'groups', 'group', 'events', 'admin', 'notifications', 'feed'];
+    const known = ['profile', 'post', 'messages', 'announcements', 'groups', 'group', 'events', 'admin', 'notifications', 'feed'];
     const segment = path.replace(/^\//, '').split('/')[0];
     if (segment === '') return 'feed';
-    if (segment === 'profile') return 'profile';
     return known.includes(segment) ? segment : 'feed';
   };
 
   // Back/forward buttons: read the view straight from the URL rather than
   // going through show() again (which would just push the same state back).
   window.addEventListener('popstate', () => {
-    priorShow(viewForPath(location.pathname));
+    const segment = viewForPath(location.pathname);
+    if (segment === 'post') {
+      const id = location.pathname.split('/')[2];
+      if (id) openPostFromPath(id);
+      return;
+    }
+    priorShow(segment);
   });
+
+  // Landing directly on a /post/:id link (e.g. from a shared link) opens
+  // that post once the signed-in session is ready.
+  if (viewForPath(location.pathname) === 'post') {
+    const id = location.pathname.split('/')[2];
+    if (id) {
+      const priorIdentity = identity;
+      identity = function() { priorIdentity(); openPostFromPath(id); };
+    }
+  }
 })();
