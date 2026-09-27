@@ -25,7 +25,13 @@ export async function onRequestGet(context) {
     // routing, so this goes through whatever already forwards /api to the
     // real backend (a Function or a Pages redirect) — this file doesn't
     // need to know the backend's real address.
-    const apiUrl = new URL(`/api/users/${encodeURIComponent(username)}`, request.url);
+    //
+    // Uses /preview specifically: the plain GET /:username endpoint
+    // requires a signed-in session (and also returns follow-relationship
+    // data this Function has no business seeing), so it always fails here
+    // and falls through to the default page. /preview is a small, public
+    // endpoint that returns just the safe fields a meta tag needs.
+    const apiUrl = new URL(`/api/users/${encodeURIComponent(username)}/preview`, request.url);
     const apiResponse = await fetch(apiUrl.toString());
     if (apiResponse.ok) {
       const data = await apiResponse.json();
