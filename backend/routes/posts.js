@@ -254,6 +254,43 @@ router.delete("/:id/comments/:commentId", auth, async (req, res) => {
 
 
 // =====================================================
+// GET SINGLE POST
+// =====================================================
+// Used for direct/shared post links (frontend route /post/:id) and by the
+// Cloudflare Pages Functions that build per-post preview metadata for
+// search engines and link-preview bots. No auth required, matching the
+// public feed above — a shared post link should open the same way the
+// feed already does for anyone who already has the app open.
+router.get("/:id", async (req, res) => {
+  try {
+    const post = await Post.findById(req.params.id)
+      .select("-reports -impressionUsers")
+      .populate("author", "name username profileImage role")
+      .populate("comments.author", "name username profileImage role")
+      .lean();
+
+    if (!post) {
+      return res.status(404).json({ message: "Post not found" });
+    }
+
+    res.set("Cache-Control", "public, max-age=30, stale-while-revalidate=60").json({ post });
+
+  } catch (error) {
+    // An invalid/malformed id (e.g. a bot probing random paths) throws a
+    // Mongoose CastError rather than a real "not found" — treat it the
+    // same way instead of surfacing a 500 for what is really a 404.
+    if (error.name === "CastError") {
+      return res.status(404).json({ message: "Post not found" });
+    }
+    console.error("Get post error:", error);
+    res.status(500).json({
+      message: "Server error"
+    });
+  }
+});
+
+
+// =====================================================
 // DELETE POST
 // =====================================================
 
