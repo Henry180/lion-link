@@ -2,6 +2,12 @@ const router = require("express").Router();
 const User = require("../models/User");
 const auth = require("../middleware/auth");
 const Notification = require("../models/Notification");
+const Post = require("../models/Post");
+
+// User-typed search text must never be handed to RegExp as-is: characters like
+// ( * + ? are regex syntax, so a crafted search could crash the query or, worse,
+// make MongoDB spin on a catastrophic pattern (ReDoS) and stall the server.
+const escapeRegex = value => String(value).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
 const ACTIVE_WINDOW_MS = 2 * 60 * 1000;
 const publicUser = (user, viewerFollowing = null) => {
@@ -28,10 +34,11 @@ router.get("/suggestions/all", auth, async (req, res) => {
 });
 
 router.get("/search/:query", auth, async (req, res) => {
-  const query = String(req.params.query || "").trim();
+  const query = String(req.params.query || "").trim().slice(0, 50);
   if (!query) return res.json({ users: [] });
+  const safeQuery = escapeRegex(query);
   const [users, viewer] = await Promise.all([
-    User.find({ _id: { $ne: req.user.userId }, $or: [{ name: new RegExp(query, "i") }, { username: new RegExp(query.replace(/^@/, ""), "i") }] }).select("name username role bio profileImage followers following createdAt lastActiveAt").limit(20),
+    User.find({ _id: { $ne: req.user.userId }, $or: [{ name: new RegExp(safeQuery, "i") }, { username: new RegExp(escapeRegex(query.replace(/^@/, "")), "i") }] }).select("name username role bio profileImage followers following createdAt lastActiveAt").limit(20),
     User.findById(req.user.userId).select("following")
   ]);
   const viewerFollowing = new Set((viewer?.following || []).map(String));
@@ -78,6 +85,44 @@ router.get("/:username/preview", async (req, res) => {
       profileImage: user.profileImage?.startsWith("data:") ? null : user.profileImage
     }
   });
+});
+
+// =====================================================
+// EVERYTHING A PERSON HAS COMMENTED (profile "Replies" tab)
+// =====================================================
+// Comments live inside posts, so the feed the browser already has only holds
+// a slice of them. This asks the database directly for the person's comments
+// across all posts, newest first, along with a little context about the post
+// each one was made on.
+router.get("/:username/replies", auth, async (req, res) => {
+  try {
+    const username = String(req.params.username).toLowerCase().replace(/^@/, "");
+    const user = await User.findOne({ username }).select("_id name username profileImage role");
+    if (!user) return res.status(404).json({ message: "User not found" });
+
+    const rows = await Post.aggregate([
+      { $match: { "comments.author": user._id } },
+      { $project: { text: 1, author: 1, comments: { $filter: { input: "$comments", as: "c", cond: { $eq: ["$$c.author", user._id] } } } } },
+      { $unwind: "$comments" },
+      { $sort: { "comments.createdAt": -1 } },
+      { $limit: 50 },
+      { $lookup: { from: User.collection.name, localField: "author", foreignField: "_id", as: "postAuthor" } },
+      { $project: {
+          postId: "$_id",
+          postText: { $substrCP: [{ $ifNull: ["$text", ""] }, 0, 140] },
+          postAuthor: { $let: { vars: { a: { $arrayElemAt: ["$postAuthor", 0] } }, in: { name: "$$a.name", username: "$$a.username" } } },
+          comment: { _id: "$comments._id", text: "$comments.text", createdAt: "$comments.createdAt", replyTo: "$comments.replyTo" }
+      } }
+    ]);
+
+    res.json({
+      user: { name: user.name, username: user.username, profileImage: user.profileImage, role: user.role },
+      replies: rows.map(row => ({ postId: row.postId, postText: row.postText, postAuthor: row.postAuthor, comment: row.comment }))
+    });
+  } catch (error) {
+    console.error("Get replies error:", error);
+    res.status(500).json({ message: "Server error" });
+  }
 });
 
 router.get("/:username", auth, async (req, res) => {
