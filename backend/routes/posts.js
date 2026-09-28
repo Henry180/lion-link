@@ -6,6 +6,46 @@ const auth = require("../middleware/auth");
 
 const router = express.Router();
 
+// =====================================================
+// INPUT LIMITS + VALIDATION
+// =====================================================
+// The browser enforces these limits (maxlength etc.), but anyone can call the
+// API directly and skip the browser entirely, so the server has to enforce
+// them too.
+const MAX_POST_LENGTH = 280;
+const MAX_COMMENT_LENGTH = 280;
+const MAX_MEDIA_ITEMS = 8;
+const ALLOWED_MEDIA_TYPES = new Set(["image", "video", "audio"]);
+
+// Returns a cleaned [{type, url}] list, or null if anything looks wrong.
+// URLs must be plain https links with no quotes, spaces, brackets or
+// backslashes: the feed builds HTML like <img src="URL">, so a URL such as
+//   x" onerror="stealTheLoginToken()
+// would otherwise run script in every visitor's browser (stored XSS).
+function cleanMedia(list) {
+  if (list === undefined || list === null) return [];
+  if (!Array.isArray(list) || list.length > MAX_MEDIA_ITEMS) return null;
+  const cleaned = [];
+  for (const item of list) {
+    const type = item && item.type;
+    const url = item && typeof item.url === "string" ? item.url.trim() : "";
+    if (!ALLOWED_MEDIA_TYPES.has(type)) return null;
+    if (!url || url.length > 2048 || !/^https:\/\/[^\s"'<>\\()]+$/i.test(url)) return null;
+    cleaned.push({ type, url });
+  }
+  return cleaned;
+}
+
+// Wraps an async route so an unexpected error (for example a malformed id)
+// gets a proper JSON response instead of leaving the request hanging forever,
+// which is what happens to an uncaught error inside an async Express 4 handler.
+const safe = handler => (req, res, next) =>
+  Promise.resolve(handler(req, res, next)).catch(error => {
+    if (error && error.name === "CastError") return res.status(404).json({ message: "Not found" });
+    console.error("Route error:", error);
+    res.status(500).json({ message: "Server error" });
+  });
+
 
 // =====================================================
 // CREATE POST
@@ -14,15 +54,22 @@ const router = express.Router();
 router.post("/", auth, async (req, res) => {
   try {
     const { text, media } = req.body;
+    const normalizedText = typeof text === "string" ? text.trim() : "";
+    const cleanedMedia = cleanMedia(media);
 
-    if (!text?.trim() && (!media || media.length === 0)) {
+    if (cleanedMedia === null) {
+      return res.status(400).json({ message: "One of the attached photos or videos is not valid" });
+    }
+    if (normalizedText.length > MAX_POST_LENGTH) {
+      return res.status(400).json({ message: `Posts can be at most ${MAX_POST_LENGTH} characters` });
+    }
+    if (!normalizedText && cleanedMedia.length === 0) {
       return res.status(400).json({
         message: "Post cannot be empty"
       });
     }
 
     // A slow connection must never turn repeated taps into duplicate posts.
-    const normalizedText = text?.trim() || "";
     const recentDuplicate = await Post.findOne({
       author: req.user.userId,
       text: normalizedText,
@@ -33,7 +80,7 @@ router.post("/", auth, async (req, res) => {
     const post = await Post.create({
       author: req.user.userId,
       text: normalizedText,
-      media: media || []
+      media: cleanedMedia
     });
 
     const populatedPost = await Post.findById(post._id)
@@ -149,17 +196,19 @@ router.post("/:id/like", auth, async (req, res) => {
   }
 });
 
-router.patch("/:id", auth, async (req, res) => {
+router.patch("/:id", auth, safe(async (req, res) => {
   const post = await Post.findById(req.params.id);
   if (!post) return res.status(404).json({ message: "Post not found" });
   if (post.author.toString() !== req.user.userId) return res.status(403).json({ message: "You can only edit your own posts" });
   if (Date.now() - post.createdAt.getTime() > 30 * 60 * 1000) return res.status(403).json({ message: "Posts can only be edited within 30 minutes" });
-  post.text = String(req.body.text || "").trim();
+  const editedText = String(req.body.text || "").trim();
+  if (editedText.length > MAX_POST_LENGTH) return res.status(400).json({ message: `Posts can be at most ${MAX_POST_LENGTH} characters` });
+  post.text = editedText;
   await post.save();
   res.json({ post });
-});
+}));
 
-router.post("/:id/impression", auth, async (req, res) => {
+router.post("/:id/impression", auth, safe(async (req, res) => {
   const post = await Post.findById(req.params.id).select("impressions impressionUsers");
   if (!post) return res.status(404).json({ message: "Post not found" });
   if (!post.impressionUsers.some(id => id.toString() === req.user.userId)) {
@@ -168,9 +217,9 @@ router.post("/:id/impression", auth, async (req, res) => {
     await post.save();
   }
   res.json({ impressions: post.impressions });
-});
+}));
 
-router.post("/:id/report", auth, async (req, res) => {
+router.post("/:id/report", auth, safe(async (req, res) => {
   const post = await Post.findById(req.params.id);
   if (!post) return res.status(404).json({ message: "Post not found" });
   if (post.author.toString() === req.user.userId) return res.status(400).json({ message: "You cannot report your own post" });
@@ -178,19 +227,19 @@ router.post("/:id/report", auth, async (req, res) => {
   post.reports.push({ reporter: req.user.userId, reason: String(req.body.reason || "").trim() });
   await post.save();
   res.status(201).json({ message: "Report submitted for admin review" });
-});
+}));
 
-router.get("/reports", auth, async (req, res) => {
+router.get("/reports", auth, safe(async (req, res) => {
   if (req.user.role !== "admin") return res.status(403).json({ message: "Admin access required" });
   const posts = await Post.find({ "reports.0": { $exists: true } }).populate("author", "name username").populate("reports.reporter", "name username").sort({ updatedAt: -1 });
   res.json({ posts });
-});
+}));
 
 // One-time (and safely re-runnable) fix-up, triggered from the admin panel
 // instead of Render's Shell — Shell requires a paid plan this account can't
 // upgrade to right now. Recalculates commentsCount for every post from its
 // real comment count, fixing posts created before that field existed.
-router.post("/admin/backfill-comment-counts", auth, async (req, res) => {
+router.post("/admin/backfill-comment-counts", auth, safe(async (req, res) => {
   if (req.user.role !== "admin") return res.status(403).json({ message: "Admin access required" });
   try {
     const result = await Post.updateMany(
@@ -202,21 +251,25 @@ router.post("/admin/backfill-comment-counts", auth, async (req, res) => {
     console.error("Backfill comment counts error:", error);
     res.status(500).json({ message: "Server error" });
   }
-});
+}));
 
-router.post("/:id/comments", auth, async (req, res) => {
+router.post("/:id/comments", auth, safe(async (req, res) => {
   const post = await Post.findById(req.params.id);
   const text = String(req.body.text || "").trim();
   if (!post) return res.status(404).json({ message: "Post not found" });
   if (!text) return res.status(400).json({ message: "Reply cannot be empty" });
-  post.comments.push({ author: req.user.userId, text, replyTo: req.body.replyTo || null });
+  if (text.length > MAX_COMMENT_LENGTH) return res.status(400).json({ message: `Replies can be at most ${MAX_COMMENT_LENGTH} characters` });
+  // replyTo must point at a real comment on this same post, never arbitrary text.
+  let replyTo = null;
+  if (req.body.replyTo) { try { if (post.comments.id(req.body.replyTo)) replyTo = req.body.replyTo; } catch { replyTo = null; } }
+  post.comments.push({ author: req.user.userId, text, replyTo });
   await post.save();
   if (post.author.toString() !== req.user.userId) await Notification.create({ recipient: post.author, actor: req.user.userId, type: "comment", post: post._id, commentId: post.comments.at(-1)._id.toString() });
   res.status(201).json({ comment: post.comments.at(-1) });
-});
+}));
 
 // Comments and replies can be edited for 15 minutes by their author.
-router.patch("/:id/comments/:commentId", auth, async (req, res) => {
+router.patch("/:id/comments/:commentId", auth, safe(async (req, res) => {
   const post = await Post.findById(req.params.id);
   if (!post) return res.status(404).json({ message: "Post not found" });
   const comment = post.comments.id(req.params.commentId);
@@ -225,13 +278,14 @@ router.patch("/:id/comments/:commentId", auth, async (req, res) => {
   if (!comment.createdAt || Date.now() - comment.createdAt.getTime() > 15 * 60 * 1000) return res.status(403).json({ message: "Comments can only be edited within 15 minutes" });
   const text = String(req.body.text || "").trim();
   if (!text) return res.status(400).json({ message: "Comment cannot be empty" });
+  if (text.length > MAX_COMMENT_LENGTH) return res.status(400).json({ message: `Comments can be at most ${MAX_COMMENT_LENGTH} characters` });
   comment.text = text;
   await post.save();
   res.json({ comment });
-});
+}));
 
 // LIKE OR UNLIKE A COMMENT
-router.post("/:id/comments/:commentId/like", auth, async (req, res) => {
+router.post("/:id/comments/:commentId/like", auth, safe(async (req, res) => {
   const post = await Post.findById(req.params.id);
   if (!post) return res.status(404).json({ message: "Post not found" });
   const comment = post.comments.id(req.params.commentId);
@@ -241,16 +295,16 @@ router.post("/:id/comments/:commentId/like", auth, async (req, res) => {
   comment.likes = existing ? comment.likes.filter(id => id.toString() !== userId) : [...comment.likes, userId];
   await post.save();
   res.json({ liked: !existing, likes: comment.likes.length });
-});
+}));
 
-router.delete("/:id/comments/:commentId", auth, async (req, res) => {
+router.delete("/:id/comments/:commentId", auth, safe(async (req, res) => {
   const post = await Post.findById(req.params.id);
   if (!post) return res.status(404).json({ message: "Post not found" });
   const comment = post.comments.id(req.params.commentId);
   if (!comment) return res.status(404).json({ message: "Reply not found" });
   if (comment.author.toString() !== req.user.userId) return res.status(403).json({ message: "Not permitted" });
   comment.deleteOne(); await post.save(); res.status(204).end();
-});
+}));
 
 
 // =====================================================
