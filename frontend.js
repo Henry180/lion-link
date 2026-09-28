@@ -19,7 +19,26 @@ let token = localStorage.getItem('lionLinkToken');
 // still valid, which is the common case.
 if (token) document.querySelector('#login-overlay')?.classList.add('hidden');
 let me = null, posts = [], announcements = [], conversations = [], activeChat = null, selectedMedia = [], stories=[], viewedProfile=null, quickMedia=[], announcementMedia=[];
-const esc = value => { const el=document.createElement('div'); el.textContent=value||''; return el.innerHTML; };
+// Escapes text for safe use in HTML. Quotes are escaped too, so the result is
+// also safe inside an attribute like data-profile="..." (the browser's own
+// innerHTML escaping leaves quotes alone, which would let a crafted username
+// break out of the attribute).
+const esc = value => { const el=document.createElement('div'); el.textContent=value||''; return el.innerHTML.replace(/"/g,'&quot;').replace(/'/g,'&#39;'); };
+// Only lets real image/video/audio addresses into src="" and url() slots:
+// https links, local blob: previews, and old-style base64 images. Anything
+// else (javascript:, quotes, brackets, spaces) becomes an empty string.
+const safeUrl = value => {
+  const url = String(value || '').trim();
+  if (/^https:\/\/[^\s"'<>\\()]+$/i.test(url)) return url;
+  if (/^blob:https?:\/\/[^\s"'<>\\()]+$/i.test(url)) return url;
+  if (/^data:image\/(?:png|jpe?g|gif|webp);base64,[A-Za-z0-9+/=]+$/i.test(url)) return url;
+  return '';
+};
+// ---- Skeleton loaders: grey shimmering placeholders shown while real content loads ----
+const skeletonPosts = (n = 4) => Array.from({ length: n }, (_, i) => `<article class="sk-post" aria-hidden="true"><span class="sk sk-avatar"></span><span class="sk-lines"><span class="sk sk-line short"></span><span class="sk sk-line"></span><span class="sk sk-line mid"></span>${i % 2 === 0 ? '<span class="sk sk-img"></span>' : ''}</span></article>`).join('');
+const skeletonPeople = (n = 5) => Array.from({ length: n }, () => `<div class="sk-person" aria-hidden="true"><span class="sk sk-avatar"></span><span class="sk-lines"><span class="sk sk-line short"></span><span class="sk sk-line mid"></span></span></div>`).join('');
+const skeletonMessages = () => [['', '55%'], ['mine', '40%'], ['', '65%'], ['mine', '50%'], ['', '35%']].map(([side, width]) => `<div class="sk-msg ${side}" aria-hidden="true"><span class="sk sk-bubble" style="width:${width}"></span></div>`).join('');
+const skeletonReplies = (n = 3) => Array.from({ length: n }, () => `<div class="sk-reply" aria-hidden="true"><span class="sk sk-line short"></span><span class="sk sk-line"></span><span class="sk sk-line mid"></span></div>`).join('');
 // Turns bare URLs into safe, clickable links. Used only for official
 // announcement bodies (see loadAnnouncements) — post text always goes
 // through esc() alone, so links typed into regular posts stay plain,
@@ -41,30 +60,30 @@ function verifiedBadge(user){return user?.role==='admin'?'<span class="verified"
 // the markup postMarkup already produces for a post's initial comments.
 function renderCommentHTML(postId, c) {
   const author = c.author || {}, username = author.username || '';
-  const commentAvatar = author.profileImage ? `style="background-image:url('${author.profileImage}');background-size:cover"` : '';
+  const commentAvatar = author.profileImage ? `style="background-image:url('${safeUrl(author.profileImage)}');background-size:cover"` : '';
   const commentLikes = Array.isArray(c.likes) ? c.likes : [];
   const liked = commentLikes.some(id => (id._id || id).toString() === me?.id);
   const isMine = (author._id || author.id || author)?.toString() === me?.id?.toString();
   const editable = isMine && c.createdAt && Date.now() - new Date(c.createdAt).getTime() <= 15 * 60 * 1000;
   return `<div class="comment" id="comment-${c._id}" data-comment-id="${c._id}"><button class="avatar avatar-gold comment-avatar" type="button" data-profile="${esc(username)}" aria-label="Open ${esc(author.name || 'user')} profile" ${commentAvatar}>${author.profileImage ? '' : initials(author.name)}</button><div class="comment-body"><div class="comment-line"><p><button class="comment-author" type="button" data-profile="${esc(username)}">${esc(author.name || 'User')}${verifiedBadge(author)}</button> ${esc(c.text)}</p>${isMine ? `<button class="comment-more" data-comment-menu="${postId}:${c._id}" aria-label="Comment options">•••</button><div class="comment-menu" id="comment-menu-${postId}-${c._id}" hidden>${editable ? `<button data-edit-comment="${postId}:${c._id}">Edit</button>` : ''}<button data-delete-comment="${postId}:${c._id}">Delete</button></div>` : ''}</div><button class="${liked ? 'liked' : ''}" data-comment-like="${postId}:${c._id}">♥ ${commentLikes.length}</button><button data-reply-to="${postId}:${c._id}">Reply</button></div></div>`;
 }
-function postMarkup(post){const mine=post.author?._id===me?.id||post.author?.id===me?.id;const user=post.author?.username||'';const hasStory=stories.some(s=>s.author?.username===user);const likes=Array.isArray(post.likes)?post.likes:[];const comments=Array.isArray(post.comments)?post.comments:[];const media=post.media||[];const avatar=post.author?.profileImage?`style="background-image:url('${post.author.profileImage}');background-size:cover"`:'';const tiles=media.slice(0,4).map((m,i)=>`<button class="gallery-item" type="button" data-open-media="${post._id}:${i}" aria-label="Open post media ${i+1}">${m.type==='video'?`<video muted preload="metadata" src="${m.url}"></video>`:`<img src="${m.url}" alt="Post media ${i+1}">`}${i===3&&media.length>4?`<span class="media-more">+${media.length-4}</span>`:''}</button>`).join('');const commentMarkup=c=>{const commentLikes=Array.isArray(c.likes)?c.likes:[];const liked=commentLikes.some(id=>(id._id||id).toString()===me?.id);const isMine=(c.author?._id||c.author?.id||c.author)?.toString()===me?.id?.toString();const editable=isMine&&c.createdAt&&Date.now()-new Date(c.createdAt).getTime()<=15*60*1000;return `<div class="comment"><div class="comment-line"><p><b>${esc(c.author?.name||'User')}</b> ${esc(c.text)}</p>${isMine?`<button class="comment-more" data-comment-menu="${post._id}:${c._id}" aria-label="Comment options">•••</button><div class="comment-menu" id="comment-menu-${post._id}-${c._id}" hidden>${editable?`<button data-edit-comment="${post._id}:${c._id}">Edit</button>`:''}<button data-delete-comment="${post._id}:${c._id}">Delete</button></div>`:''}</div><button class="${liked?'liked':''}" data-comment-like="${post._id}:${c._id}">♥ ${commentLikes.length}</button><button data-reply-to="${post._id}:${c._id}">Reply</button></div>`};return `<article class="post" id="post-${post._id}"><button class="avatar avatar-gold ${hasStory?'has-story':''}" data-avatar="${user}" ${avatar}>${post.author?.profileImage?'':initials(post.author?.name)}</button><div class="post-content"><div class="post-meta"><strong class="profile-name" data-profile="${user}">${esc(post.author?.name||'Lion Link User')}</strong><span>@${esc(user)} · ${when(post.createdAt)}</span>${mine?`<button class="action" data-menu="${post._id}">•••</button>`:` <button class="follow-small" data-follow="${user}">Follow</button>`}</div>${post.text?`<p class="post-text">${esc(post.text)}</p>`:''}${media.length?`<div class="post-media gallery gallery-${Math.min(media.length,4)}">${tiles}</div>`:''}<div class="post-actions"><button class="action" data-report-post="${mine?'':post._id}" ${mine?'hidden':''}>⚑ Report</button><button class="action" data-comment-toggle="${post._id}" aria-expanded="false">💬 ${post.commentsCount ?? comments.length}</button><button class="action ${likes.some(id=>(id._id||id).toString()===me?.id)?'liked':''}" data-like="${post._id}">♥ ${likes.length}</button><button class="action" data-share="${post._id}">↗ Share</button></div><div class="post-menu" id="menu-${post._id}" hidden><button data-edit-post="${post._id}">Edit</button><button data-delete-post="${post._id}">Delete</button></div><div class="comment-thread" id="comments-${post._id}" hidden>${comments.map(commentMarkup).join('')}<form data-comment-form="${post._id}"><input maxlength="280" required placeholder="Write a reply…"><button>Reply</button></form></div></div></article>`;}
+function postMarkup(post){const mine=post.author?._id===me?.id||post.author?.id===me?.id;const user=post.author?.username||'';const hasStory=stories.some(s=>s.author?.username===user);const likes=Array.isArray(post.likes)?post.likes:[];const comments=Array.isArray(post.comments)?post.comments:[];const media=post.media||[];const avatar=post.author?.profileImage?`style="background-image:url('${safeUrl(post.author.profileImage)}');background-size:cover"`:'';const tiles=media.slice(0,4).map((m,i)=>`<button class="gallery-item" type="button" data-open-media="${post._id}:${i}" aria-label="Open post media ${i+1}">${m.type==='video'?`<video muted preload="metadata" src="${safeUrl(m.url)}"></video>`:`<img src="${safeUrl(m.url)}" alt="Post media ${i+1}">`}${i===3&&media.length>4?`<span class="media-more">+${media.length-4}</span>`:''}</button>`).join('');const commentMarkup=c=>{const commentLikes=Array.isArray(c.likes)?c.likes:[];const liked=commentLikes.some(id=>(id._id||id).toString()===me?.id);const isMine=(c.author?._id||c.author?.id||c.author)?.toString()===me?.id?.toString();const editable=isMine&&c.createdAt&&Date.now()-new Date(c.createdAt).getTime()<=15*60*1000;return `<div class="comment"><div class="comment-line"><p><b>${esc(c.author?.name||'User')}</b> ${esc(c.text)}</p>${isMine?`<button class="comment-more" data-comment-menu="${post._id}:${c._id}" aria-label="Comment options">•••</button><div class="comment-menu" id="comment-menu-${post._id}-${c._id}" hidden>${editable?`<button data-edit-comment="${post._id}:${c._id}">Edit</button>`:''}<button data-delete-comment="${post._id}:${c._id}">Delete</button></div>`:''}</div><button class="${liked?'liked':''}" data-comment-like="${post._id}:${c._id}">♥ ${commentLikes.length}</button><button data-reply-to="${post._id}:${c._id}">Reply</button></div>`};return `<article class="post" id="post-${post._id}"><button class="avatar avatar-gold ${hasStory?'has-story':''}" data-avatar="${esc(user)}" ${avatar}>${post.author?.profileImage?'':initials(post.author?.name)}</button><div class="post-content"><div class="post-meta"><strong class="profile-name" data-profile="${esc(user)}">${esc(post.author?.name||'Lion Link User')}</strong><span>@${esc(user)} · ${when(post.createdAt)}</span>${mine?`<button class="action" data-menu="${post._id}">•••</button>`:` <button class="follow-small" data-follow="${esc(user)}">Follow</button>`}</div>${post.text?`<p class="post-text">${esc(post.text)}</p>`:''}${media.length?`<div class="post-media gallery gallery-${Math.min(media.length,4)}">${tiles}</div>`:''}<div class="post-actions"><button class="action" data-report-post="${mine?'':post._id}" ${mine?'hidden':''}>⚑ Report</button><button class="action" data-comment-toggle="${post._id}" aria-expanded="false">💬 ${post.commentsCount ?? comments.length}</button><button class="action ${likes.some(id=>(id._id||id).toString()===me?.id)?'liked':''}" data-like="${post._id}">♥ ${likes.length}</button><button class="action" data-share="${post._id}">↗ Share</button></div><div class="post-menu" id="menu-${post._id}" hidden><button data-edit-post="${post._id}">Edit</button><button data-delete-post="${post._id}">Delete</button></div><div class="comment-thread" id="comments-${post._id}" hidden>${comments.map(commentMarkup).join('')}<form data-comment-form="${post._id}"><input maxlength="280" required placeholder="Write a reply…"><button>Reply</button></form></div></div></article>`;}
 postMarkup = function(post){
   const mine=post.author?._id===me?.id||post.author?.id===me?.id, user=post.author?.username||'', hasStory=stories.some(s=>s.author?.username===user), likes=Array.isArray(post.likes)?post.likes:[], comments=Array.isArray(post.comments)?post.comments:[], media=post.media||[];
-  const avatar=post.author?.profileImage?`style="background-image:url('${post.author.profileImage}');background-size:cover"`:'';
-  const tiles=media.slice(0,4).map((m,i)=>`<button class="gallery-item" type="button" data-open-media="${post._id}:${i}" aria-label="Open post media ${i+1}">${m.type==='video'?`<video muted preload="metadata" src="${m.url}"></video>`:`<img src="${m.url}" alt="Post media ${i+1}">`}${i===3&&media.length>4?`<span class="media-more">+${media.length-4}</span>`:''}</button>`).join('');
-  const commentMarkup=c=>{const author=c.author||{}, username=author.username||'', commentAvatar=author.profileImage?`style="background-image:url('${author.profileImage}');background-size:cover"`:'';const commentLikes=Array.isArray(c.likes)?c.likes:[],liked=commentLikes.some(id=>(id._id||id).toString()===me?.id),isMine=(author._id||author.id||author)?.toString()===me?.id?.toString(),editable=isMine&&c.createdAt&&Date.now()-new Date(c.createdAt).getTime()<=15*60*1000;return `<div class="comment"><button class="avatar avatar-gold comment-avatar" type="button" data-profile="${esc(username)}" aria-label="Open ${esc(author.name||'user')} profile" ${commentAvatar}>${author.profileImage?'':initials(author.name)}</button><div class="comment-body"><div class="comment-line"><p><button class="comment-author" type="button" data-profile="${esc(username)}">${esc(author.name||'User')}${verifiedBadge(author)}</button> ${esc(c.text)}</p>${isMine?`<button class="comment-more" data-comment-menu="${post._id}:${c._id}" aria-label="Comment options">•••</button><div class="comment-menu" id="comment-menu-${post._id}-${c._id}" hidden>${editable?`<button data-edit-comment="${post._id}:${c._id}">Edit</button>`:''}<button data-delete-comment="${post._id}:${c._id}">Delete</button></div>`:''}</div><button class="${liked?'liked':''}" data-comment-like="${post._id}:${c._id}">♥ ${commentLikes.length}</button><button data-reply-to="${post._id}:${c._id}">Reply</button></div></div>`};
-  return `<article class="post" id="post-${post._id}"><button class="avatar avatar-gold ${hasStory?'has-story':''}" data-avatar="${user}" ${avatar}>${post.author?.profileImage?'':initials(post.author?.name)}</button><div class="post-content"><div class="post-meta"><strong class="profile-name" data-profile="${user}">${esc(post.author?.name||'Lion Link User')}${verifiedBadge(post.author)}</strong><span>@${esc(user)} · ${when(post.createdAt)}</span>${mine?`<button class="action" data-menu="${post._id}">•••</button>`:` <button class="follow-small" data-follow="${user}">Follow</button>`}</div>${post.text?`<p class="post-text">${esc(post.text)}</p>`:''}${media.length?`<div class="post-media gallery gallery-${Math.min(media.length,4)}">${tiles}</div>`:''}<div class="post-actions"><button class="action" data-report-post="${mine?'':post._id}" ${mine?'hidden':''}>⚑ Report</button><button class="action" data-comment-toggle="${post._id}" aria-expanded="false">💬 ${post.commentsCount ?? comments.length}</button><button class="action ${likes.some(id=>(id._id||id).toString()===me?.id)?'liked':''}" data-like="${post._id}">♥ ${likes.length}</button><button class="action" data-share="${post._id}">↗ Share</button></div><div class="post-menu" id="menu-${post._id}" hidden><button data-edit-post="${post._id}">Edit</button><button data-delete-post="${post._id}">Delete</button></div><div class="comment-thread" id="comments-${post._id}" hidden>${comments.map(commentMarkup).join('')}<form data-comment-form="${post._id}"><input maxlength="280" required placeholder="Write a reply…"><button>Reply</button></form></div></div></article>`;
+  const avatar=post.author?.profileImage?`style="background-image:url('${safeUrl(post.author.profileImage)}');background-size:cover"`:'';
+  const tiles=media.slice(0,4).map((m,i)=>`<button class="gallery-item" type="button" data-open-media="${post._id}:${i}" aria-label="Open post media ${i+1}">${m.type==='video'?`<video muted preload="metadata" src="${safeUrl(m.url)}"></video>`:`<img src="${safeUrl(m.url)}" alt="Post media ${i+1}">`}${i===3&&media.length>4?`<span class="media-more">+${media.length-4}</span>`:''}</button>`).join('');
+  const commentMarkup=c=>{const author=c.author||{}, username=author.username||'', commentAvatar=author.profileImage?`style="background-image:url('${safeUrl(author.profileImage)}');background-size:cover"`:'';const commentLikes=Array.isArray(c.likes)?c.likes:[],liked=commentLikes.some(id=>(id._id||id).toString()===me?.id),isMine=(author._id||author.id||author)?.toString()===me?.id?.toString(),editable=isMine&&c.createdAt&&Date.now()-new Date(c.createdAt).getTime()<=15*60*1000;return `<div class="comment"><button class="avatar avatar-gold comment-avatar" type="button" data-profile="${esc(username)}" aria-label="Open ${esc(author.name||'user')} profile" ${commentAvatar}>${author.profileImage?'':initials(author.name)}</button><div class="comment-body"><div class="comment-line"><p><button class="comment-author" type="button" data-profile="${esc(username)}">${esc(author.name||'User')}${verifiedBadge(author)}</button> ${esc(c.text)}</p>${isMine?`<button class="comment-more" data-comment-menu="${post._id}:${c._id}" aria-label="Comment options">•••</button><div class="comment-menu" id="comment-menu-${post._id}-${c._id}" hidden>${editable?`<button data-edit-comment="${post._id}:${c._id}">Edit</button>`:''}<button data-delete-comment="${post._id}:${c._id}">Delete</button></div>`:''}</div><button class="${liked?'liked':''}" data-comment-like="${post._id}:${c._id}">♥ ${commentLikes.length}</button><button data-reply-to="${post._id}:${c._id}">Reply</button></div></div>`};
+  return `<article class="post" id="post-${post._id}"><button class="avatar avatar-gold ${hasStory?'has-story':''}" data-avatar="${esc(user)}" ${avatar}>${post.author?.profileImage?'':initials(post.author?.name)}</button><div class="post-content"><div class="post-meta"><strong class="profile-name" data-profile="${esc(user)}">${esc(post.author?.name||'Lion Link User')}${verifiedBadge(post.author)}</strong><span>@${esc(user)} · ${when(post.createdAt)}</span>${mine?`<button class="action" data-menu="${post._id}">•••</button>`:` <button class="follow-small" data-follow="${esc(user)}">Follow</button>`}</div>${post.text?`<p class="post-text">${esc(post.text)}</p>`:''}${media.length?`<div class="post-media gallery gallery-${Math.min(media.length,4)}">${tiles}</div>`:''}<div class="post-actions"><button class="action" data-report-post="${mine?'':post._id}" ${mine?'hidden':''}>⚑ Report</button><button class="action" data-comment-toggle="${post._id}" aria-expanded="false">💬 ${post.commentsCount ?? comments.length}</button><button class="action ${likes.some(id=>(id._id||id).toString()===me?.id)?'liked':''}" data-like="${post._id}">♥ ${likes.length}</button><button class="action" data-share="${post._id}">↗ Share</button></div><div class="post-menu" id="menu-${post._id}" hidden><button data-edit-post="${post._id}">Edit</button><button data-delete-post="${post._id}">Delete</button></div><div class="comment-thread" id="comments-${post._id}" hidden>${comments.map(commentMarkup).join('')}<form data-comment-form="${post._id}"><input maxlength="280" required placeholder="Write a reply…"><button>Reply</button></form></div></div></article>`;
 };
 function renderPosts(){const all=posts.map(postMarkup).join('')||'<p class="empty-profile">No posts yet.</p>';$('#post-feed').innerHTML=all;const username=(viewedProfile||me)?.username;$('#profile-posts').innerHTML=posts.filter(p=>p.author?.username===username).map(postMarkup).join('')||'<p class="empty-profile">No posts yet.</p>';}
 async function loadPosts(){posts=(await api('/posts')).posts;renderPosts();}
-function renderProfile(user){if(!user)return;const own=user.username===me?.username;viewedProfile=own?null:user;$('#profile-name').textContent=user.name;$('#profile-handle').textContent='@'+user.username;const avatar=$('.profile-avatar');avatar.textContent=user.profileImage?'':initials(user.name);avatar.style.backgroundImage=user.profileImage?`url(${user.profileImage})`:'';avatar.style.backgroundSize='cover';avatar.dataset.profileAvatar=user.username;avatar.classList.toggle('has-story',stories.some(s=>s.author?.username===user.username));$('#profile-cover').style.backgroundImage=user.coverImage?`url(${user.coverImage})`:'';$('.profile-bio').textContent=user.bio||'UNN student · Sharing campus moments and meeting new people.';let activity=$('#profile-activity');if(!activity){activity=document.createElement('p');activity.id='profile-activity';activity.className='profile-activity';$('#profile-handle').insertAdjacentElement('afterend',activity);}activity.textContent=own||user.isActiveNow?'● Active now':user.lastActiveAt?`Last active ${when(user.lastActiveAt)} ago`:'';activity.hidden=!activity.textContent;document.querySelectorAll('.profile-stats b')[0].textContent=user.following?.length??user.following??0;document.querySelectorAll('.profile-stats b')[1].textContent=user.followers?.length??user.followers??0;$('.edit-profile').hidden=!own;$('.message-profile').hidden=own;const follow=$('.follow-profile');follow.hidden=own;follow.textContent=user.isFollowing?'Following':'Follow';follow.classList.toggle('following',!!user.isFollowing);$('.profile-story-add').hidden=!own;renderPosts();}
+function renderProfile(user){if(!user)return;const own=user.username===me?.username;viewedProfile=own?null:user;$('#profile-name').textContent=user.name;$('#profile-handle').textContent='@'+user.username;const avatar=$('.profile-avatar');avatar.textContent=user.profileImage?'':initials(user.name);avatar.style.backgroundImage=user.profileImage?`url(${safeUrl(user.profileImage)})`:'';avatar.style.backgroundSize='cover';avatar.dataset.profileAvatar=user.username;avatar.classList.toggle('has-story',stories.some(s=>s.author?.username===user.username));$('#profile-cover').style.backgroundImage=user.coverImage?`url(${safeUrl(user.coverImage)})`:'';$('.profile-bio').textContent=user.bio||'UNN student · Sharing campus moments and meeting new people.';let activity=$('#profile-activity');if(!activity){activity=document.createElement('p');activity.id='profile-activity';activity.className='profile-activity';$('#profile-handle').insertAdjacentElement('afterend',activity);}activity.textContent=own||user.isActiveNow?'● Active now':user.lastActiveAt?`Last active ${when(user.lastActiveAt)} ago`:'';activity.hidden=!activity.textContent;document.querySelectorAll('.profile-stats b')[0].textContent=user.following?.length??user.following??0;document.querySelectorAll('.profile-stats b')[1].textContent=user.followers?.length??user.followers??0;$('.edit-profile').hidden=!own;$('.message-profile').hidden=own;const follow=$('.follow-profile');follow.hidden=own;follow.textContent=user.isFollowing?'Following':'Follow';follow.classList.toggle('following',!!user.isFollowing);$('.profile-story-add').hidden=!own;renderPosts();}
 const renderProfileBase = renderProfile;
 renderProfile = function(user){renderProfileBase(user);if(user)$('#profile-name').innerHTML=`${esc(user.name)}${verifiedBadge(user)}`;};
 async function openProfile(username){if(username===me.username){renderProfile(me);show('profile');return;}try{const {user}=await api('/users/'+encodeURIComponent(username));renderProfile(user);show('profile');}catch(error){toast(error.message);}}
-async function loadAnnouncements(){announcements=(await api('/announcements')).announcements;const attachment=a=>(a.media||[]).map(m=>m.type==='video'?`<video class="announcement-media" controls src="${m.url}"></video>`:`<img class="announcement-media" src="${m.url}" alt="Announcement media">`).join('');$('#announcement-list').innerHTML=announcements.map(a=>`<article class="announcement-card"><div class="date">${new Date(a.createdAt).toLocaleDateString()}</div><div><span class="official-label">LION LINK ADMIN ${verifiedBadge({role:'admin'})}</span><h3>${esc(a.title)}</h3><p>${linkify(a.body)}</p>${attachment(a)}</div></article>`).join('')||'<p class="empty-profile">No announcements yet.</p>';$('#admin-announcements').innerHTML=announcements.map(a=>`<article class="admin-announcement"><div><b>${esc(a.title)}</b><p>${esc(a.body)}</p>${attachment(a)}</div><button data-remove-announcement="${a._id}">Remove</button></article>`).join('');}
+async function loadAnnouncements(){announcements=(await api('/announcements')).announcements;const attachment=a=>(a.media||[]).map(m=>m.type==='video'?`<video class="announcement-media" controls src="${safeUrl(m.url)}"></video>`:`<img class="announcement-media" src="${safeUrl(m.url)}" alt="Announcement media">`).join('');$('#announcement-list').innerHTML=announcements.map(a=>`<article class="announcement-card"><div class="date">${new Date(a.createdAt).toLocaleDateString()}</div><div><span class="official-label">LION LINK ADMIN ${verifiedBadge({role:'admin'})}</span><h3>${esc(a.title)}</h3><p>${linkify(a.body)}</p>${attachment(a)}</div></article>`).join('')||'<p class="empty-profile">No announcements yet.</p>';$('#admin-announcements').innerHTML=announcements.map(a=>`<article class="admin-announcement"><div><b>${esc(a.title)}</b><p>${esc(a.body)}</p>${attachment(a)}</div><button data-remove-announcement="${a._id}">Remove</button></article>`).join('');}
 async function loadChats(){conversations=(await api('/conversations')).conversations;$('#conversations').innerHTML=conversations.map(c=>{const other=c.members.find(x=>(x._id||x.id)!==me.id)||me,last=c.messages.at(-1);return `<button class="conversation" data-chat="${c._id}"><div class="avatar avatar-gold">${initials(other.name)}</div><div><strong>${esc(other.name)}</strong><p>${esc(last?.text||(last?.media?'📎 Media':'Start a conversation'))}</p></div></button>`}).join('')||'<p class="empty-profile">No messages yet. Click a user’s avatar to start one.</p>';}
-function openChat(id){activeChat=conversations.find(c=>c._id===id);if(!activeChat)return;const other=activeChat.members.find(x=>(x._id||x.id)!==me.id)||me;const messageMarkup=m=>{const mine=(m.sender?._id||m.sender)===me.id,media=m.media?.url?`<div class="message-media">${m.media.type==='video'?`<video controls src="${m.media.url}"></video>`:`<img src="${m.media.url}" alt="Message attachment">`}</div>`:'';return `<div class="message-row ${mine?'mine':''}"><div class="bubble">${media}${m.text?`<div class="message-text">${esc(m.text)}</div>`:''}</div></div>`};$('#chat-empty').hidden=true;$('#active-chat').hidden=false;$('#active-chat').innerHTML=`<header class="chat-header"><div class="avatar avatar-gold">${initials(other.name)}</div><div><strong>${esc(other.name)}</strong><small>@${esc(other.username)}</small></div></header><div class="messages" id="messages">${activeChat.messages.map(messageMarkup).join('')}</div><form class="chat-compose" id="chat-form"><input maxlength="300" placeholder="Write a message…"><label class="chat-media-picker" title="Attach image or video">📎<input id="chat-media-input" type="file" accept="image/*,video/*" hidden></label><button class="chat-send" type="submit" aria-label="Send message">➤</button></form>`;let chatMedia=null;$('#chat-media-input').onchange=async e=>{const file=e.target.files[0];if(!file)return;if(file.size>5*1024*1024){e.target.value='';return toast('Attachments must be 5 MB or smaller.')}try{chatMedia=await fileData(file);toast('Attachment ready to send.')}catch{toast('That attachment could not be read.')}};$('#chat-form').onsubmit=async e=>{e.preventDefault();const text=e.target.elements[0].value.trim();if(!text&&!chatMedia)return;try{await api(`/conversations/${id}/messages`,{method:'POST',body:JSON.stringify({text,media:chatMedia})});await loadChats();openChat(id)}catch(error){toast(error.message)}};}
+function openChat(id){activeChat=conversations.find(c=>c._id===id);if(!activeChat)return;const other=activeChat.members.find(x=>(x._id||x.id)!==me.id)||me;const messageMarkup=m=>{const mine=(m.sender?._id||m.sender)===me.id,media=m.media?.url?`<div class="message-media">${m.media.type==='video'?`<video controls src="${safeUrl(m.media.url)}"></video>`:`<img src="${safeUrl(m.media.url)}" alt="Message attachment">`}</div>`:'';return `<div class="message-row ${mine?'mine':''}"><div class="bubble">${media}${m.text?`<div class="message-text">${esc(m.text)}</div>`:''}</div></div>`};$('#chat-empty').hidden=true;$('#active-chat').hidden=false;$('#active-chat').innerHTML=`<header class="chat-header"><div class="avatar avatar-gold">${initials(other.name)}</div><div><strong>${esc(other.name)}</strong><small>@${esc(other.username)}</small></div></header><div class="messages" id="messages">${activeChat.messages.map(messageMarkup).join('')}</div><form class="chat-compose" id="chat-form"><input maxlength="300" placeholder="Write a message…"><label class="chat-media-picker" title="Attach image or video">📎<input id="chat-media-input" type="file" accept="image/*,video/*" hidden></label><button class="chat-send" type="submit" aria-label="Send message">➤</button></form>`;let chatMedia=null;$('#chat-media-input').onchange=async e=>{const file=e.target.files[0];if(!file)return;if(file.size>5*1024*1024){e.target.value='';return toast('Attachments must be 5 MB or smaller.')}try{chatMedia=await fileData(file);toast('Attachment ready to send.')}catch{toast('That attachment could not be read.')}};$('#chat-form').onsubmit=async e=>{e.preventDefault();const text=e.target.elements[0].value.trim();if(!text&&!chatMedia)return;try{await api(`/conversations/${id}/messages`,{method:'POST',body:JSON.stringify({text,media:chatMedia})});await loadChats();openChat(id)}catch(error){toast(error.message)}};}
 function loginMode(){const signup=$('#login-mode').value==='signup';$('#login-name-field').hidden=!signup;$('#login-username-field').hidden=!signup;$('#login-email').placeholder=signup?'your@email.com':'email or username';}
 $('#login-mode').onchange=loginMode;
 let authSubmitting=false;
@@ -114,11 +133,11 @@ async function fileData(file){
 }
 $('#media-picker').onclick=()=>$('#media-input').click();
 $('#quick-post-media-picker')?.addEventListener('click',()=>$('#quick-post-media').click());
-$('#announcement-media-picker')?.addEventListener('click',()=>$('#announcement-media').click());$('#media-input').onchange=async event=>{try{selectedMedia=await Promise.all([...event.target.files].slice(0,8).filter(file=>file.size<5*1024*1024).map(fileData));$('#media-preview').hidden=!selectedMedia.length;$('#media-preview').innerHTML=selectedMedia.map((m,i)=>`<div>${m.type==='video'?`<video src="${m.url}"></video>`:`<img src="${m.url}">`}<button type="button" data-remove-media="${i}">×</button></div>`).join('');if(event.target.files.length>8)toast('Only the first 8 files were selected.')}catch{toast('That media could not be read')}};
+$('#announcement-media-picker')?.addEventListener('click',()=>$('#announcement-media').click());$('#media-input').onchange=async event=>{try{selectedMedia=await Promise.all([...event.target.files].slice(0,8).filter(file=>file.size<5*1024*1024).map(fileData));$('#media-preview').hidden=!selectedMedia.length;$('#media-preview').innerHTML=selectedMedia.map((m,i)=>`<div>${m.type==='video'?`<video src="${safeUrl(m.url)}"></video>`:`<img src="${safeUrl(m.url)}">`}<button type="button" data-remove-media="${i}">×</button></div>`).join('');if(event.target.files.length>8)toast('Only the first 8 files were selected.')}catch{toast('That media could not be read')}};
 $('#submit-post').onclick=async()=>{const text=$('#post-text').value.trim();if(!text&&!selectedMedia.length)return;try{await api('/posts',{method:'POST',body:JSON.stringify({text,media:selectedMedia})});$('#post-text').value='';selectedMedia=[];$('#media-preview').hidden=true;await loadPosts();toast('Your post is live!')}catch(error){toast(error.message)}};
 $('#open-post').onclick=()=>{show('feed');$('#post-text').focus()};$('#refresh-feed').onclick=()=>loadPosts().catch(error=>toast(error.message));$('#open-admin').onclick=()=>show('admin');$('.edit-profile').onclick=()=>{$('#edit-name').value=me.name;$('#edit-bio').value=me.bio||'';$('#edit-modal').hidden=false};$('#edit-profile-form').onsubmit=async e=>{e.preventDefault();try{const avatar=$('#edit-avatar').files[0],cover=$('#edit-cover').files[0];me=(await api('/auth/me',{method:'PATCH',body:JSON.stringify({name:$('#edit-name').value,bio:$('#edit-bio').value,profileImage:avatar?await fileData(avatar).then(x=>x.url):me.profileImage,coverImage:cover?await fileData(cover).then(x=>x.url):me.coverImage})})).user;identity();$('#edit-modal').hidden=true;toast('Profile updated.')}catch(error){toast(error.message)}};$('#help-link').onclick=()=>toast('For help, contact a Lion Link administrator.');document.querySelectorAll('[data-close-modal]').forEach(b=>b.onclick=()=>$('#'+b.dataset.closeModal).hidden=true);
 $('#announcement-form').onsubmit=async event=>{event.preventDefault();try{await api('/announcements',{method:'POST',body:JSON.stringify({title:$('#announcement-title').value,body:$('#announcement-body').value})});event.target.reset();await loadAnnouncements();toast('Announcement published.')}catch(error){toast(error.message)}};
-document.addEventListener('click',async event=>{const button=event.target.closest('[data-view]');if(button){if(button.dataset.view==='profile'){viewedProfile=null;renderProfile(me);}return show(button.dataset.view);}const d=event.target.dataset;if(d.like){const post=posts.find(p=>p._id===d.like),index=post.likes.findIndex(id=>(id._id||id).toString()===me.id);index<0?post.likes.push(me.id):post.likes.splice(index,1);renderPosts();try{await api(`/posts/${d.like}/like`,{method:'POST'})}catch(error){index<0?post.likes.pop():post.likes.push(me.id);renderPosts();toast(error.message)}}if(d.follow)try{const result=await api(`/users/${d.follow}/follow`,{method:'POST'});event.target.textContent=result.following?'Following':'Follow';event.target.classList.toggle('following',result.following);toast(result.following?'Following user':'Unfollowed user')}catch(error){toast(error.message)}if(d.commentToggle){const box=$('#comments-'+d.commentToggle);box.hidden=!box.hidden}if(d.deletePost&&confirm('Delete this post?'))try{await api('/posts/'+d.deletePost,{method:'DELETE'});loadPosts()}catch(error){toast(error.message)}if(d.editPost){const post=posts.find(p=>p._id===d.editPost),text=prompt('Edit post',post.text);if(text!==null)try{await api('/posts/'+d.editPost,{method:'PATCH',body:JSON.stringify({text})});loadPosts()}catch(error){toast(error.message)}}if(d.removeAnnouncement&&confirm('Remove this announcement?'))try{await api('/announcements/'+d.removeAnnouncement,{method:'DELETE'});loadAnnouncements()}catch(error){toast(error.message)}if(d.gallery){const post=posts.find(p=>p._id===d.gallery);$('#media-modal-content').innerHTML=post.media.map(m=>m.type==='video'?`<div class="modal-media"><video controls src="${m.url}"></video></div>`:`<div class="modal-media"><img src="${m.url}"></div>`).join('');$('#media-modal').hidden=false}if(d.chat)openChat(d.chat);if(d.user){if(d.user===me.username)return show('profile');try{const {conversation}=await api('/conversations',{method:'POST',body:JSON.stringify({username:d.user})});await loadChats();show('messages');openChat(conversation._id)}catch(error){toast(error.message)}}});
+document.addEventListener('click',async event=>{const button=event.target.closest('[data-view]');if(button){if(button.dataset.view==='profile'){viewedProfile=null;renderProfile(me);}return show(button.dataset.view);}const d=event.target.dataset;if(d.like){const post=posts.find(p=>p._id===d.like),index=post.likes.findIndex(id=>(id._id||id).toString()===me.id);index<0?post.likes.push(me.id):post.likes.splice(index,1);renderPosts();try{await api(`/posts/${d.like}/like`,{method:'POST'})}catch(error){index<0?post.likes.pop():post.likes.push(me.id);renderPosts();toast(error.message)}}if(d.follow)try{const result=await api(`/users/${d.follow}/follow`,{method:'POST'});event.target.textContent=result.following?'Following':'Follow';event.target.classList.toggle('following',result.following);toast(result.following?'Following user':'Unfollowed user')}catch(error){toast(error.message)}if(d.commentToggle){const box=$('#comments-'+d.commentToggle);box.hidden=!box.hidden}if(d.deletePost&&confirm('Delete this post?'))try{await api('/posts/'+d.deletePost,{method:'DELETE'});loadPosts()}catch(error){toast(error.message)}if(d.editPost){const post=posts.find(p=>p._id===d.editPost),text=prompt('Edit post',post.text);if(text!==null)try{await api('/posts/'+d.editPost,{method:'PATCH',body:JSON.stringify({text})});loadPosts()}catch(error){toast(error.message)}}if(d.removeAnnouncement&&confirm('Remove this announcement?'))try{await api('/announcements/'+d.removeAnnouncement,{method:'DELETE'});loadAnnouncements()}catch(error){toast(error.message)}if(d.gallery){const post=posts.find(p=>p._id===d.gallery);$('#media-modal-content').innerHTML=post.media.map(m=>m.type==='video'?`<div class="modal-media"><video controls src="${safeUrl(m.url)}"></video></div>`:`<div class="modal-media"><img src="${safeUrl(m.url)}"></div>`).join('');$('#media-modal').hidden=false}if(d.chat)openChat(d.chat);if(d.user){if(d.user===me.username)return show('profile');try{const {conversation}=await api('/conversations',{method:'POST',body:JSON.stringify({username:d.user})});await loadChats();show('messages');openChat(conversation._id)}catch(error){toast(error.message)}}});
 document.addEventListener('submit',async event=>{const id=event.target.dataset.commentForm;if(!id)return;event.preventDefault();try{await api(`/posts/${id}/comments`,{method:'POST',body:JSON.stringify({text:event.target.elements[0].value,replyTo:event.target.dataset.replyTo||null})});await loadPosts({silent:true});const box=$('#comments-'+id);if(box)box.hidden=false;}catch(error){toast(error.message)}});
 (async()=>{loginMode();if(!token)return;try{const result=await api('/auth/me');me=result.user;$('#login-overlay').classList.add('hidden');identity();await Promise.all([loadPosts(),loadAnnouncements(),loadChats()]);}catch(error){if(error.status===401||error.status===403){localStorage.removeItem('lionLinkToken');token=null;$('#login-overlay').classList.remove('hidden');}else{toast('Unable to reconnect. Your signed-in session is still saved.');}}})();
 
@@ -126,8 +145,8 @@ async function loadStories(){stories=(await api('/stories')).stories;renderPosts
 $('#story-upload')?.addEventListener('change',async e=>{try{await api('/stories',{method:'POST',body:JSON.stringify({media:await fileData(e.target.files[0])})});loadStories();toast('Story posted for 24 hours.')}catch(error){toast(error.message)}});
 window.addEventListener('scroll',()=>$('#floating-post').hidden=window.scrollY<280);$('#floating-post').onclick=()=>{$('#quick-post-modal').hidden=false;$('#quick-post-text').focus()};
 $('#refresh-feed').onclick=async()=>{await loadPosts();window.scrollTo({top:0,behavior:'smooth'});toast('Showing latest posts.');};
-function openStory(story){$('#media-modal-content').innerHTML=story.media.type==='video'?`<div class="modal-media"><video controls autoplay src="${story.media.url}"></video></div>`:`<div class="modal-media"><img src="${story.media.url}" alt="Story"></div>`;$('#media-modal').hidden=false;}
-document.addEventListener('click',async e=>{const target=e.target.closest('[data-open-media],[data-profile],[data-avatar],[data-profile-avatar]'),d=target?.dataset||{};if(d.openMedia){const [postId,index]=d.openMedia.split(':');const item=posts.find(p=>p._id===postId)?.media[+index];if(item){$('#media-modal-content').innerHTML=item.type==='video'?`<div class="modal-media"><video controls autoplay src="${item.url}"></video></div>`:`<div class="modal-media"><img src="${item.url}" alt="Post media"></div>`;$('#media-modal').hidden=false;}}if(d.profile)openProfile(d.profile);if(d.avatar||d.profileAvatar){const username=d.avatar||d.profileAvatar,story=stories.find(s=>s.author?.username===username);if(story)openStory(story);else openProfile(username);}});
+function openStory(story){$('#media-modal-content').innerHTML=story.media.type==='video'?`<div class="modal-media"><video controls autoplay src="${safeUrl(story.media.url)}"></video></div>`:`<div class="modal-media"><img src="${safeUrl(story.media.url)}" alt="Story"></div>`;$('#media-modal').hidden=false;}
+document.addEventListener('click',async e=>{const target=e.target.closest('[data-open-media],[data-profile],[data-avatar],[data-profile-avatar]'),d=target?.dataset||{};if(d.openMedia){const [postId,index]=d.openMedia.split(':');const item=posts.find(p=>p._id===postId)?.media[+index];if(item){$('#media-modal-content').innerHTML=item.type==='video'?`<div class="modal-media"><video controls autoplay src="${safeUrl(item.url)}"></video></div>`:`<div class="modal-media"><img src="${safeUrl(item.url)}" alt="Post media"></div>`;$('#media-modal').hidden=false;}}if(d.profile)openProfile(d.profile);if(d.avatar||d.profileAvatar){const username=d.avatar||d.profileAvatar,story=stories.find(s=>s.author?.username===username);if(story)openStory(story);else openProfile(username);}});
 setTimeout(()=>{if(token)loadStories().catch(()=>{})},600);
 
 let deferredInstall;
@@ -142,7 +161,7 @@ function configureInstallPopup(){
 }
 window.addEventListener('beforeinstallprompt', event => { event.preventDefault(); deferredInstall=event; configureInstallPopup(); if (!sessionStorage.getItem('lionLinkInstallPromptShown')) { sessionStorage.setItem('lionLinkInstallPromptShown', '1'); $('#download-lion-link-popup').hidden=false; } });
 window.addEventListener('appinstalled',()=>{deferredInstall=null;$('#download-lion-link-popup').hidden=true;toast('Lion Link has been added to your home screen.');});
-if ('serviceWorker' in navigator) navigator.serviceWorker.register('./sw.js');
+if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js');
 async function promptLionLinkInstall(){
  if(isInstalled){toast('Lion Link is already installed.');return;}
  if(isIosDevice){if(navigator.share){try{await navigator.share({title:'Lion Link',text:'Add Lion Link to your home screen.',url:location.href});}catch{}}else toast('In Safari, tap Share, then choose “Add to Home Screen”.');return;}
@@ -179,14 +198,14 @@ document.addEventListener('click', async event => {
  if(d.deleteComment){const [postId,commentId]=d.deleteComment.split(':');if(confirm('Delete this comment?'))try{await api(`/posts/${postId}/comments/${commentId}`,{method:'DELETE'});await loadPosts({silent:true});const box=$('#comments-'+postId);if(box)box.hidden=false;}catch(error){toast(error.message)}}
 });
 function openReel(url){reelVideos=posts.flatMap(post=>(post.media||[]).filter(media=>media.type==='video').map(media=>({...media,post})));reelIndex=Math.max(0,reelVideos.findIndex(video=>video.url===url));renderReel();$('#reels-modal').hidden=false;}
-function renderReel(){const reel=reelVideos[reelIndex];if(!reel)return;$('#reels-content').innerHTML=`<video controls autoplay src="${reel.url}"></video><p>${esc(reel.post.author?.name||'Lion Link user')} · ${esc(reel.post.text||'')}</p><small>${reelIndex+1} of ${reelVideos.length}</small>`;}
+function renderReel(){const reel=reelVideos[reelIndex];if(!reel)return;$('#reels-content').innerHTML=`<video controls autoplay src="${safeUrl(reel.url)}"></video><p>${esc(reel.post.author?.name||'Lion Link user')} · ${esc(reel.post.text||'')}</p><small>${reelIndex+1} of ${reelVideos.length}</small>`;}
 $('#close-reels').onclick=()=>$('#reels-modal').hidden=true;$('#reel-prev').onclick=()=>{if(reelVideos.length){reelIndex=(reelIndex-1+reelVideos.length)%reelVideos.length;renderReel()}};$('#reel-next').onclick=()=>{if(reelVideos.length){reelIndex=(reelIndex+1)%reelVideos.length;renderReel()}};
 document.addEventListener('click',event=>{if(event.target.matches('.post-media video')){event.preventDefault();openReel(event.target.currentSrc||event.target.src)}});
 
-function mediaPreview(items, container){const el=$(container);el.hidden=!items.length;el.innerHTML=items.map(m=>m.type==='video'?`<video controls src="${m.url}"></video>`:`<img src="${m.url}" alt="Selected media">`).join('');}
+function mediaPreview(items, container){const el=$(container);el.hidden=!items.length;el.innerHTML=items.map(m=>m.type==='video'?`<video controls src="${safeUrl(m.url)}"></video>`:`<img src="${safeUrl(m.url)}" alt="Selected media">`).join('');}
 function renderQuickMedia(){
   $('#quick-post-preview').hidden = !quickMedia.length;
-  $('#quick-post-preview').innerHTML = quickMedia.map((item, index) => `<div>${item.type === 'video' ? `<video src="${item.url}"></video>` : `<img src="${item.url}" alt="Selected image">`}${item.type === 'image' ? `<button type="button" data-quick-crop="${index}">Crop</button>` : ''}${item.type === 'video' ? `<button type="button" data-quick-trim="${index}">Trim</button>` : ''}<button type="button" data-quick-remove="${index}" aria-label="Remove media">×</button></div>`).join('');
+  $('#quick-post-preview').innerHTML = quickMedia.map((item, index) => `<div>${item.type === 'video' ? `<video src="${safeUrl(item.url)}"></video>` : `<img src="${safeUrl(item.url)}" alt="Selected image">`}${item.type === 'image' ? `<button type="button" data-quick-crop="${index}">Crop</button>` : ''}${item.type === 'video' ? `<button type="button" data-quick-trim="${index}">Trim</button>` : ''}<button type="button" data-quick-remove="${index}" aria-label="Remove media">×</button></div>`).join('');
 }
 $('#quick-post-media').onchange=async e=>{
   const files=[...e.target.files].slice(0,8);
@@ -208,7 +227,7 @@ document.addEventListener('click', event => {
 $('#quick-post-form').onsubmit=async e=>{e.preventDefault();const text=$('#quick-post-text').value.trim();if(!text&&!quickMedia.length)return;try{await api('/posts',{method:'POST',body:JSON.stringify({text,media:quickMedia})});e.target.reset();quickMedia=[];renderQuickMedia();$('#quick-post-modal').hidden=true;await loadPosts();window.scrollTo({top:0,behavior:'smooth'});toast('Your post is live!');}catch(error){toast(error.message);}};
 $('#announcement-media').onchange=async e=>{announcementMedia=await Promise.all([...e.target.files].slice(0,8).map(fileData));mediaPreview(announcementMedia,'#announcement-preview');};
 $('#announcement-form').onsubmit=async event=>{event.preventDefault();try{await api('/announcements',{method:'POST',body:JSON.stringify({title:$('#announcement-title').value,body:$('#announcement-body').value,media:announcementMedia})});event.target.reset();announcementMedia=[];mediaPreview(announcementMedia,'#announcement-preview');await loadAnnouncements();toast('Announcement published.')}catch(error){toast(error.message)}};
-function personMarkup(user){const avatar=user.profileImage?`style="background-image:url('${user.profileImage}');background-size:cover"`:'';const ring=stories.some(s=>s.author?.username===user.username)?'has-story':'';const isFollowing=user.isFollowing||followedUsernames?.has(user.username);return `<div class="person"><button class="avatar avatar-gold ${ring}" data-avatar="${user.username}" ${avatar}>${user.profileImage?'':initials(user.name)}</button><div><strong class="profile-name" data-profile="${user.username}">${esc(user.name)}</strong><small>@${esc(user.username)}</small></div>${isFollowing?'':`<button class="follow-small" data-follow="${user.username}">Follow</button>`}</div>`;}
+function personMarkup(user){const avatar=user.profileImage?`style="background-image:url('${safeUrl(user.profileImage)}');background-size:cover"`:'';const ring=stories.some(s=>s.author?.username===user.username)?'has-story':'';const isFollowing=user.isFollowing||followedUsernames?.has(user.username);return `<div class="person"><button class="avatar avatar-gold ${ring}" data-avatar="${esc(user.username)}" ${avatar}>${user.profileImage?'':initials(user.name)}</button><div><strong class="profile-name" data-profile="${esc(user.username)}">${esc(user.name)}</strong><small>@${esc(user.username)}</small></div>${isFollowing?'':`<button class="follow-small" data-follow="${esc(user.username)}">Follow</button>`}</div>`;}
 async function loadPeople(){try{const {users}=await api('/users/suggestions/all');$('#people-list').innerHTML=users.map(personMarkup).join('')||'<p class="empty-profile">No other members yet.</p>';renderMobileDrawers(users);}catch(error){console.warn(error);}}
 $('#open-user-search').onclick=()=>{$('#user-search-modal').hidden=false;$('#user-search-input').focus();};
 let searchTimer;$('#user-search-input').oninput=e=>{clearTimeout(searchTimer);searchTimer=setTimeout(async()=>{const value=e.target.value.trim();if(!value){$('#user-search-results').innerHTML='<p class="empty-profile">Search registered Lion Link users.</p>';return;}try{const {users}=await api('/users/search/'+encodeURIComponent(value));$('#user-search-results').innerHTML=users.map(personMarkup).join('')||'<p class="empty-profile">No people found.</p>';}catch(error){toast(error.message);}},180);};
@@ -219,7 +238,7 @@ function renderMobileDrawers(users=[]){const admin=me?.role==='admin'?'<button d
 function closeDrawers(){document.querySelectorAll('.mobile-drawer').forEach(x=>x.hidden=true);$('#drawer-scrim').hidden=true;}
 function openDrawer(side){$('#mobile-'+side+'-drawer').hidden=false;$('#drawer-scrim').hidden=false;}
 $('#drawer-scrim').onclick=closeDrawers;let touchStart;document.addEventListener('touchstart',e=>{touchStart=e.changedTouches[0];},{passive:true});document.addEventListener('touchend',e=>{if(!touchStart||innerWidth>800)return;const end=e.changedTouches[0],dx=end.clientX-touchStart.clientX,dy=end.clientY-touchStart.clientY;if(Math.abs(dx)>70&&Math.abs(dx)>Math.abs(dy))openDrawer(dx>0?'left':'right');},{passive:true});
-const originalIdentity=identity;identity=function(){originalIdentity();if(me){const avatar=$('.account .avatar');avatar.style.backgroundImage=me.profileImage?`url(${me.profileImage})`:'';avatar.style.backgroundSize='cover';avatar.classList.toggle('has-story',stories.some(s=>s.author?.username===me.username));loadPeople();}};
+const originalIdentity=identity;identity=function(){originalIdentity();if(me){const avatar=$('.account .avatar');avatar.style.backgroundImage=me.profileImage?`url(${safeUrl(me.profileImage)})`:'';avatar.style.backgroundSize='cover';avatar.classList.toggle('has-story',stories.some(s=>s.author?.username===me.username));loadPeople();}};
 
 // Reliability and mobile usability improvements.
 const baseRenderProfile = renderProfile;
@@ -295,7 +314,7 @@ openStory = function(story) {
   const mine = (story.author?._id || story.author?.id) === me?.id;
   const controls = mine ? `<div class="story-controls"><button data-edit-story="${story._id}">Edit caption</button><button data-delete-story="${story._id}">Delete story</button></div>` : '';
   const viewers = mine ? `<details class="story-viewers"><summary>◉ ${story.viewerCount || story.viewers?.length || 0} views</summary>${(story.viewers || []).map(viewer => `<p>${esc(viewer.name)} <small>@${esc(viewer.username)}</small></p>`).join('') || '<p>No viewers yet.</p>'}</details>` : '';
-  $('#media-modal-content').innerHTML = `${story.media.type === 'video' ? `<div class="modal-media"><video controls autoplay src="${story.media.url}"></video></div>` : `<div class="modal-media"><img src="${story.media.url}" alt="Story"></div>`}${story.caption ? `<p class="story-caption" style="display:inline-block;background:rgba(0,0,0,.6);color:#fff;padding:7px 14px;border-radius:10px;max-width:90%;">${esc(story.caption)}</p>` : ''}${viewers}${controls}`;
+  $('#media-modal-content').innerHTML = `${story.media.type === 'video' ? `<div class="modal-media"><video controls autoplay src="${safeUrl(story.media.url)}"></video></div>` : `<div class="modal-media"><img src="${safeUrl(story.media.url)}" alt="Story"></div>`}${story.caption ? `<p class="story-caption" style="display:inline-block;background:rgba(0,0,0,.6);color:#fff;padding:7px 14px;border-radius:10px;max-width:90%;">${esc(story.caption)}</p>` : ''}${viewers}${controls}`;
   $('#media-modal').hidden = false;
   if (!mine) api(`/stories/${story._id}/view`, { method: 'POST' }).then(({ viewerCount }) => { story.viewerCount = viewerCount; }).catch(() => {});
 };
@@ -320,7 +339,7 @@ document.addEventListener('touchend', event => {
 
 document.addEventListener('click', event => { if (event.target.closest('.mobile-drawer [data-view]')) closeDrawers(); }, true);
 const baseLoadPostsWithLoading = loadPosts;
-loadPosts = async function(options = {}) { if (!options.silent && !posts.length) $('#post-feed').innerHTML = '<p class="empty-profile">Loading latest posts…</p>'; return baseLoadPostsWithLoading(options); };
+loadPosts = async function(options = {}) { if (!options.silent && !posts.length) $('#post-feed').innerHTML = skeletonPosts(4); return baseLoadPostsWithLoading(options); };
 
 // In-app notifications for likes, comments, follows, and unread messages.
 const notificationsView = document.createElement('section');
@@ -375,13 +394,22 @@ document.addEventListener('keydown', event => { if (event.key === 'Escape' && !f
 async function openFollowList(list) {
   const user = viewedProfile || me;
   if (!user) return;
+  // Open the popup immediately with skeleton rows, then fill it in — the
+  // person sees the list respond to their tap right away instead of waiting
+  // on the network with nothing happening.
+  $('#follow-list-title').textContent = list === 'followers' ? 'Followers' : 'Following';
+  $('#follow-list-results').innerHTML = skeletonPeople(6);
+  followListModal.hidden = false;
   try {
     const result = await api(`/users/${encodeURIComponent(user.username)}/${list}`);
-    $('#follow-list-title').textContent = list === 'followers' ? 'Followers' : 'Following';
     $('#follow-list-results').innerHTML = result.users.map(personMarkup).join('') || `<p class="empty-profile">No ${list} yet.</p>`;
-    followListModal.hidden = false;
-  } catch (error) { toast(error.message); }
+  } catch (error) { followListModal.hidden = true; toast(error.message); }
 }
+// Tapping someone in the list opens their profile, so the list should get
+// out of the way at the same moment (the profile-opening handlers still run).
+followListModal.addEventListener('click', event => {
+  if (event.target.closest('[data-profile],[data-avatar],[data-profile-avatar]') && !event.target.closest('[data-follow]')) followListModal.hidden = true;
+});
 const renderProfileWithLists = renderProfile;
 renderProfile = function(user) {
   renderProfileWithLists(user);
@@ -402,7 +430,7 @@ openChat = function(id) {
   activeChat?.messages.forEach((message, index) => {
     if (message.media?.type !== 'audio') return;
     const image = $('#active-chat').querySelectorAll('.message-media img')[index];
-    if (image) image.outerHTML = `<audio controls src="${message.media.url}"></audio>`;
+    if (image) image.outerHTML = `<audio controls src="${safeUrl(message.media.url)}"></audio>`;
   });
   const form = $('#chat-form');
   if (form) {
@@ -458,7 +486,7 @@ openChat = function(id) {
     const liked = (story.likes || []).some(id => String(id._id || id) === String(me?.id));
     const comments = (story.comments || []).map(comment => `<button class="story-comment" data-story-dm="${esc(comment.author?.username || '')}"><b>${esc(comment.author?.name || 'User')}</b> ${esc(comment.text)}</button>`).join('') || '<p class="empty-profile">No comments yet.</p>';
     const controls = mine ? `<div class="story-controls"><button data-edit-story="${story._id}">Edit caption</button><button data-delete-story="${story._id}">Delete story</button></div>` : '';
-    const visual = story.media.type === 'video' ? `<video controls autoplay src="${story.media.url}"></video>` : `<img src="${story.media.url}" alt="Story">`;
+    const visual = story.media.type === 'video' ? `<video controls autoplay src="${safeUrl(story.media.url)}"></video>` : `<img src="${safeUrl(story.media.url)}" alt="Story">`;
     $('#media-modal-content').innerHTML = `<div class="modal-media">${visual}</div>${story.caption ? `<p class="story-caption" style="display:inline-block;background:rgba(0,0,0,.6);color:#fff;padding:7px 14px;border-radius:10px;max-width:90%;">${esc(story.caption)}</p>` : ''}<div class="story-actions"><button data-story-like="${story._id}" class="${liked ? 'liked' : ''}">♥ ${story.likes?.length || 0}</button><button data-story-comment="${story._id}">💬 ${story.comments?.length || 0}</button></div><div class="story-comments" id="story-comments-${story._id}" hidden>${comments}</div>${controls}${group.length > 1 ? `<div class="reels-actions"><button data-story-step="${story._id}:prev" ${index === 0 ? 'disabled' : ''}>‹ Previous</button><small>${index + 1} of ${group.length}</small><button data-story-step="${story._id}:next" ${index === group.length - 1 ? 'disabled' : ''}>Next ›</button></div>` : ''}`;
     $('#media-modal').hidden = false;
   };
@@ -538,13 +566,13 @@ window.addEventListener('click', event => {
 
   let groups = [];
   const groupMarkup = group => {
-    const image = group.coverImage ? ` style="background-image:url('${group.coverImage}')"` : '';
+    const image = group.coverImage ? ` style="background-image:url('${safeUrl(group.coverImage)}')"` : '';
     const approve = me?.role === 'admin' && !group.approved ? `<button class="small-post" data-approve-group="${group._id}">Approve</button>` : '';
     const membershipAction = group.isOwner ? '' : group.isMember ? `<button class="small-post" data-leave-group="${group._id}">Leave group</button>` : `<button class="small-post" data-join-group="${group._id}">Join group</button>`;
     const deleteAction = group.isOwner || me?.role === 'admin' ? `<button class="small-post" data-delete-group="${group._id}">Delete</button>` : '';
     return `<article class="group-card" data-open-group="${group._id}" tabindex="0"><div class="group-cover"${image}></div><div><h2>${esc(group.name)}</h2><p>${esc(group.description)}</p><small>${group.memberCount || 0} member${group.memberCount === 1 ? '' : 's'} · Created by ${esc(group.owner?.name || 'Lion Link member')} · ${group.privacy}</small></div>${approve}${membershipAction}${deleteAction}</article>`;
   };
-  async function loadGroups() { if (!token) return; const data = await api('/groups'); groups = data.groups || []; $('#group-list').innerHTML = groups.map(groupMarkup).join('') || '<p class="empty-profile">No groups yet. Start the first one.</p>'; }
+  async function loadGroups() { if (!token) return; if (!groups.length) $('#group-list').innerHTML = skeletonPosts(3); const data = await api('/groups'); groups = data.groups || []; $('#group-list').innerHTML = groups.map(groupMarkup).join('') || '<p class="empty-profile">No groups yet. Start the first one.</p>'; }
   const priorShow = show;
   show = function(view) { priorShow(view); if (view === 'groups') loadGroups().catch(error => toast(error.message)); };
   $('#open-group-create')?.addEventListener('click', () => $('#group-create-modal').hidden = false);
@@ -553,7 +581,7 @@ window.addEventListener('click', event => {
     const box = $('#group-cover-preview');
     if (!box) return;
     box.hidden = !groupCoverMedia;
-    box.innerHTML = groupCoverMedia ? `<div><img src="${groupCoverMedia.url}" alt="Cover preview"><button type="button" id="group-cover-crop">Crop</button><button type="button" id="group-cover-remove" aria-label="Remove cover">×</button></div>` : '';
+    box.innerHTML = groupCoverMedia ? `<div><img src="${safeUrl(groupCoverMedia.url)}" alt="Cover preview"><button type="button" id="group-cover-crop">Crop</button><button type="button" id="group-cover-remove" aria-label="Remove cover">×</button></div>` : '';
   };
   $('#group-cover')?.addEventListener('change', async event => {
     const file = event.target.files[0];
@@ -568,7 +596,7 @@ window.addEventListener('click', event => {
   });
   $('#group-create-form')?.addEventListener('submit', async event => { event.preventDefault(); try { const { group } = await api('/groups', { method: 'POST', body: JSON.stringify({ name: $('#group-name').value, description: $('#group-description').value, privacy: $('#group-privacy').value, coverImage: groupCoverMedia?.url || '' }) }); groups.unshift(group); $('#group-create-modal').hidden = true; event.target.reset(); groupCoverMedia = null; renderGroupCoverPreview(); $('#group-list').innerHTML = groups.map(groupMarkup).join(''); toast('Group created — waiting for Lion Link Admin approval.'); } catch (error) { toast(error.message); } });
   document.addEventListener('click', async event => { const button = event.target.closest('[data-join-group],[data-leave-group],[data-delete-group],[data-approve-group]'); if (!button) return; const id = button.dataset.joinGroup || button.dataset.leaveGroup || button.dataset.deleteGroup || button.dataset.approveGroup; const endpoint = button.dataset.joinGroup ? 'join' : button.dataset.leaveGroup ? 'leave' : button.dataset.approveGroup ? 'approve' : null; if (!endpoint && !confirm('Delete this group permanently?')) return; try { if (endpoint) { const { group } = await api(`/groups/${id}/${endpoint}`, { method: endpoint === 'approve' ? 'PATCH' : 'POST' }); groups = groups.map(item => item._id === id ? group : item); } else { await api(`/groups/${id}`, { method: 'DELETE' }); groups = groups.filter(item => item._id !== id); } $('#group-list').innerHTML = groups.map(groupMarkup).join('') || '<p class="empty-profile">No groups yet.</p>'; } catch (error) { toast(error.message); } }, true);
-  async function openGroup(id) { try { const { group } = await api(`/groups/${id}`); const image = group.coverImage ? ` style="background-image:url('${group.coverImage}')"` : ''; const members = (group.members || []).map(member => `<button type="button" class="group-member" data-profile="${esc(member.username)}">${esc(member.name)} · @${esc(member.username)}</button>`).join('') || '<p>No members yet.</p>'; const approve = me?.role === 'admin' && !group.approved ? `<button class="small-post" data-approve-group="${group._id}">Approve group</button>` : ''; const membershipAction = group.isOwner ? '' : group.isMember ? `<button class="small-post" data-leave-group="${group._id}">Leave group</button>` : `<button class="small-post" data-join-group="${group._id}">Join group</button>`; const deleteAction = group.isOwner || me?.role === 'admin' ? `<button class="small-post" data-delete-group="${group._id}">Delete group</button>` : ''; const messages = (group.messages || []).map(message => `<article class="group-message reactable ${String(message.sender?._id || message.sender) === String(me?.id) ? 'mine' : ''}" data-react-group="${group._id}:${message._id}"><b>${esc(message.sender?.name || 'Member')}${verifiedBadge(message.sender)}</b><p>${esc(message.text)}</p><small>${when(message.createdAt)} ${(message.reactions||[]).length ? `· ♥ ${(message.reactions||[]).length}` : ''}</small></article>`).join('') || '<p class="empty-profile">No messages yet — start the conversation.</p>'; const chat = group.isMember ? `<section class="group-chat"><h2>Group conversation</h2><div class="group-message-list" id="group-messages-${group._id}">${messages}</div><form data-group-message="${group._id}" class="group-compose"><input maxlength="1000" required placeholder="Message ${esc(group.name)}"><button class="small-post">Send</button></form></section>` : '<p class="group-chat-locked">Join this group to take part in the conversation.</p>'; const add = group.isOwner ? `<section class="group-add-members"><h2>Add members</h2><div id="group-suggestions-${group._id}"><button class="text-link" data-load-suggestions="${group._id}">Suggest people to add</button></div></section>` : ''; $('#group-detail').innerHTML = `<div class="group-detail-cover"${image}></div><h1>${esc(group.name)}</h1><p>${esc(group.description)}</p><p><b>${esc(group.owner?.name || 'Lion Link member')}</b> created this ${group.privacy} group on ${new Date(group.createdAt).toLocaleDateString()}.</p>${approve}${membershipAction}${deleteAction}${chat}<details class="group-members-menu"><summary>Members (${group.memberCount || 0})</summary><div class="group-members">${members}</div></details>${add}`; show('group'); } catch (error) { toast(error.message); } }
+  async function openGroup(id) { try { const { group } = await api(`/groups/${id}`); const image = group.coverImage ? ` style="background-image:url('${safeUrl(group.coverImage)}')"` : ''; const members = (group.members || []).map(member => `<button type="button" class="group-member" data-profile="${esc(member.username)}">${esc(member.name)} · @${esc(member.username)}</button>`).join('') || '<p>No members yet.</p>'; const approve = me?.role === 'admin' && !group.approved ? `<button class="small-post" data-approve-group="${group._id}">Approve group</button>` : ''; const membershipAction = group.isOwner ? '' : group.isMember ? `<button class="small-post" data-leave-group="${group._id}">Leave group</button>` : `<button class="small-post" data-join-group="${group._id}">Join group</button>`; const deleteAction = group.isOwner || me?.role === 'admin' ? `<button class="small-post" data-delete-group="${group._id}">Delete group</button>` : ''; const messages = (group.messages || []).map(message => `<article class="group-message reactable ${String(message.sender?._id || message.sender) === String(me?.id) ? 'mine' : ''}" data-react-group="${group._id}:${message._id}"><b>${esc(message.sender?.name || 'Member')}${verifiedBadge(message.sender)}</b><p>${esc(message.text)}</p><small>${when(message.createdAt)} ${(message.reactions||[]).length ? `· ♥ ${(message.reactions||[]).length}` : ''}</small></article>`).join('') || '<p class="empty-profile">No messages yet — start the conversation.</p>'; const chat = group.isMember ? `<section class="group-chat"><h2>Group conversation</h2><div class="group-message-list" id="group-messages-${group._id}">${messages}</div><form data-group-message="${group._id}" class="group-compose"><input maxlength="1000" required placeholder="Message ${esc(group.name)}"><button class="small-post">Send</button></form></section>` : '<p class="group-chat-locked">Join this group to take part in the conversation.</p>'; const add = group.isOwner ? `<section class="group-add-members"><h2>Add members</h2><div id="group-suggestions-${group._id}"><button class="text-link" data-load-suggestions="${group._id}">Suggest people to add</button></div></section>` : ''; $('#group-detail').innerHTML = `<div class="group-detail-cover"${image}></div><h1>${esc(group.name)}</h1><p>${esc(group.description)}</p><p><b>${esc(group.owner?.name || 'Lion Link member')}</b> created this ${group.privacy} group on ${new Date(group.createdAt).toLocaleDateString()}.</p>${approve}${membershipAction}${deleteAction}${chat}<details class="group-members-menu"><summary>Members (${group.memberCount || 0})</summary><div class="group-members">${members}</div></details>${add}`; show('group'); } catch (error) { toast(error.message); } }
   document.addEventListener('click', event => { const card = event.target.closest('[data-open-group]'); if (card && !event.target.closest('[data-join-group],[data-leave-group],[data-delete-group],[data-approve-group]')) openGroup(card.dataset.openGroup); }, true);
   document.addEventListener('keydown', event => { const card = event.target.closest('[data-open-group]'); if (card && (event.key === 'Enter' || event.key === ' ')) { event.preventDefault(); openGroup(card.dataset.openGroup); } });
   document.addEventListener('click', async event => { const load = event.target.closest('[data-load-suggestions]'); const add = event.target.closest('[data-add-group-member]'); if (!load && !add) return; try { if (load) { const { users } = await api(`/groups/${load.dataset.loadSuggestions}/suggestions`); const box = $(`#group-suggestions-${load.dataset.loadSuggestions}`); box.innerHTML = users.map(user => `<button class="group-member" data-add-group-member="${load.dataset.loadSuggestions}:${esc(user.username)}">Add ${esc(user.name)}</button>`).join('') || '<p>Everyone is already in this group.</p>'; } else { const [id, username] = add.dataset.addGroupMember.split(':'); await api(`/groups/${id}/members`, { method: 'POST', body: JSON.stringify({ username }) }); await openGroup(id); toast('Member added to the group.'); } } catch (error) { toast(error.message); } }, true);
@@ -598,7 +626,7 @@ document.addEventListener('click', event => { if (event.target.closest('[data-cl
 // Reels use a vertical, touch-friendly stream instead of one video at a time.
 renderReel = function() {
   if (!reelVideos.length) return;
-  $('#reels-content').innerHTML = reelVideos.map((reel, index) => `<article class="reel-slide" data-reel-index="${index}"><video controls playsinline preload="metadata" src="${reel.url}"></video><div><b>${esc(reel.post.author?.name || 'Lion Link user')}</b><p>${esc(reel.post.text || '')}</p></div></article>`).join('');
+  $('#reels-content').innerHTML = reelVideos.map((reel, index) => `<article class="reel-slide" data-reel-index="${index}"><video controls playsinline preload="metadata" src="${safeUrl(reel.url)}"></video><div><b>${esc(reel.post.author?.name || 'Lion Link user')}</b><p>${esc(reel.post.text || '')}</p></div></article>`).join('');
   const selected = $('#reels-content [data-reel-index="' + reelIndex + '"]');
   selected?.scrollIntoView({ block: 'nearest' });
 };
@@ -713,7 +741,7 @@ loadNotifications = async function() {
     const { notifications, unread, unreadMessages } = await api('/notifications');
     const count = $('#notification-count'); count.textContent = unread; count.hidden = !unread;
     const messageCount = document.querySelector('[data-view="messages"] i'); if (messageCount) { messageCount.textContent = unreadMessages || ''; messageCount.hidden = !unreadMessages; }
-    $('#notification-list').innerHTML = notifications.map(item => { const image=item.actor?.profileImage?` style="background-image:url('${item.actor.profileImage}');background-size:cover"`:''; return `<button type="button" class="notification ${item.read ? '' : 'unread'}" data-notification-type="${item.type}" data-notification-post="${item.post?._id || item.post || ''}" data-notification-comment="${item.commentId || ''}" data-notification-conversation="${item.conversation?._id || item.conversation || ''}"><div class="avatar avatar-gold"${image}>${item.actor?.profileImage?'':initials(item.actor?.name)}</div><p><b>${esc(item.actor?.name || 'Someone')}</b> ${item.type === 'like' ? 'liked your post' : item.type === 'comment' ? 'commented on your post' : item.type === 'follow' ? 'started following you' : 'sent you a message'}<small>${when(item.createdAt)}</small></p></button>`; }).join('') || '<p class="empty-profile">You have no notifications yet.</p>';
+    $('#notification-list').innerHTML = notifications.map(item => { const image=item.actor?.profileImage?` style="background-image:url('${safeUrl(item.actor.profileImage)}');background-size:cover"`:''; return `<button type="button" class="notification ${item.read ? '' : 'unread'}" data-notification-type="${item.type}" data-notification-post="${item.post?._id || item.post || ''}" data-notification-comment="${item.commentId || ''}" data-notification-conversation="${item.conversation?._id || item.conversation || ''}"><div class="avatar avatar-gold"${image}>${item.actor?.profileImage?'':initials(item.actor?.name)}</div><p><b>${esc(item.actor?.name || 'Someone')}</b> ${item.type === 'like' ? 'liked your post' : item.type === 'comment' ? 'commented on your post' : item.type === 'follow' ? 'started following you' : 'sent you a message'}<small>${when(item.createdAt)}</small></p></button>`; }).join('') || '<p class="empty-profile">You have no notifications yet.</p>';
     const mobile = $('.bottom-nav [data-view="notifications"]'); if (mobile) mobile.innerHTML = `<span class="ui-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9M10 21h4"/></svg></span>Notification${unread ? `<i class="mobile-notification-count">${unread}</i>` : ''}`;
   } catch (error) { console.warn(error); }
 };
@@ -744,8 +772,8 @@ document.addEventListener('click', async event => {
 function showPostMedia(postId, index) {
   const post = posts.find(item => item._id === postId), media = post?.media || [];
   const item = media[index]; if (!item) return;
-  const visual = item.type === 'video' ? `<video controls autoplay src="${item.url}"></video>` : `<img src="${item.url}" alt="Post media ${index + 1}">`;
-  $('#media-modal-content').innerHTML = `<div class="modal-media">${visual}</div><div class="reels-actions">${media.length > 1 ? `<button type="button" data-media-prev="${postId}:${index}">‹ Previous</button><small>${index + 1} of ${media.length}</small><button type="button" data-media-next="${postId}:${index}">Next ›</button>` : ''}<a class="small-post" href="${item.url}" download="lion-link-media-${index + 1}">Save media</a></div>`;
+  const visual = item.type === 'video' ? `<video controls autoplay src="${safeUrl(item.url)}"></video>` : `<img src="${safeUrl(item.url)}" alt="Post media ${index + 1}">`;
+  $('#media-modal-content').innerHTML = `<div class="modal-media">${visual}</div><div class="reels-actions">${media.length > 1 ? `<button type="button" data-media-prev="${postId}:${index}">‹ Previous</button><small>${index + 1} of ${media.length}</small><button type="button" data-media-next="${postId}:${index}">Next ›</button>` : ''}<a class="small-post" href="${safeUrl(item.url)}" download="lion-link-media-${index + 1}">Save media</a></div>`;
   $('#media-modal').hidden = false;
 }
 document.addEventListener('click', event => {
@@ -776,7 +804,7 @@ const postMarkupWithInteractionFixes = postMarkup;
 postMarkup = function(post) {
   let markup = postMarkupWithInteractionFixes(post);
   const username = post.author?.username;
-  if (followedUsernames.has(username)) markup = markup.replace(`<button class="follow-small" data-follow="${username}">Follow</button>`, '');
+  if (followedUsernames.has(username)) markup = markup.replace(`<button class="follow-small" data-follow="${esc(username)}">Follow</button>`, '');
   if (post.createdAt && Date.now() - new Date(post.createdAt).getTime() > 30 * 60 * 1000) markup = markup.replace(`<button data-edit-post="${post._id}">Edit</button>`, '');
   return markup;
 };
@@ -784,7 +812,7 @@ postMarkup = function(post) {
 const personMarkupWithFollowState = personMarkup;
 personMarkup = function(user) {
   const markup = personMarkupWithFollowState(user);
-  return followedUsernames.has(user.username) ? markup.replace(`<button class="follow-small" data-follow="${user.username}">Follow</button>`, `<button class="follow-small following" data-follow="${user.username}">Following</button>`) : markup;
+  return followedUsernames.has(user.username) ? markup.replace(`<button class="follow-small" data-follow="${esc(user.username)}">Follow</button>`, `<button class="follow-small following" data-follow="${esc(user.username)}">Following</button>`) : markup;
 };
 document.addEventListener('click', event => {
   const button = event.target.closest('[data-follow]');
@@ -863,7 +891,7 @@ openChat = function(id) {
   const headerAvatar = $('#active-chat .chat-header .avatar');
   if (headerAvatar && other.profileImage) {
     headerAvatar.textContent = '';
-    headerAvatar.style.backgroundImage = `url(${other.profileImage})`;
+    headerAvatar.style.backgroundImage = `url(${safeUrl(other.profileImage)})`;
     headerAvatar.style.backgroundSize = 'cover';
   }
   const list = $('#messages');
@@ -871,8 +899,8 @@ openChat = function(id) {
   list.innerHTML = activeChat.messages.map(message => {
     const mine = String(message.sender?._id || message.sender) === String(me?.id);
     const sender = mine ? me : other;
-    const avatar = sender.profileImage ? ` style="background-image:url('${sender.profileImage}');background-size:cover"` : '';
-    const media = message.media?.url ? `<div class="message-media">${message.media.type === 'video' ? `<video controls src="${message.media.url}"></video>` : message.media.type === 'audio' ? `<audio controls src="${message.media.url}"></audio>` : `<img src="${message.media.url}" alt="Message attachment">`}</div>` : '';
+    const avatar = sender.profileImage ? ` style="background-image:url('${safeUrl(sender.profileImage)}');background-size:cover"` : '';
+    const media = message.media?.url ? `<div class="message-media">${message.media.type === 'video' ? `<video controls src="${safeUrl(message.media.url)}"></video>` : message.media.type === 'audio' ? `<audio controls src="${safeUrl(message.media.url)}"></audio>` : `<img src="${safeUrl(message.media.url)}" alt="Message attachment">`}</div>` : '';
     return `<div class="message-row ${mine ? 'mine' : ''}"><div class="avatar avatar-gold"${avatar}>${sender.profileImage ? '' : initials(sender.name)}</div><div><div class="bubble">${media}${message.text ? `<div class="message-text">${esc(message.text)}</div>` : ''}</div><small class="message-time">${when(message.createdAt)}</small></div></div>`;
   }).join('');
   requestAnimationFrame(() => { list.scrollTop = list.scrollHeight; });
@@ -891,7 +919,7 @@ loadNotifications = async function() {
     const count = $('#notification-count'); count.textContent = unread; count.hidden = !unread;
     const mobile = $('.bottom-nav [data-view="notifications"]');
     if (mobile) mobile.innerHTML = `<span class="ui-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9M10 21h4"/></svg></span>Notification${unread ? `<i class="mobile-notification-count">${unread}</i>` : ''}`;
-    $('#notification-list').innerHTML = bellItems.map(item => { const photo=item.actor?.profileImage ? ` style="background-image:url('${item.actor.profileImage}');background-size:cover"` : ''; return `<button type="button" class="notification ${item.read ? 'read' : 'unread'}" data-notification-id="${item._id}" data-notification-type="${item.type}" data-notification-actor="${esc(item.actor?.username || '')}" data-notification-post="${item.post?._id || item.post || ''}" data-notification-conversation="${item.conversation?._id || item.conversation || ''}"><div class="avatar avatar-gold"${photo}>${item.actor?.profileImage ? '' : initials(item.actor?.name)}</div><p><b>${esc(item.actor?.name || 'Someone')}</b> ${item.type === 'follow' ? 'started following you' : item.type === 'like' ? 'liked your post' : 'commented on your post'}<small>${when(item.createdAt)}</small></p></button>`; }).join('') || '<p class="empty-profile">You have no notifications yet.</p>';
+    $('#notification-list').innerHTML = bellItems.map(item => { const photo=item.actor?.profileImage ? ` style="background-image:url('${safeUrl(item.actor.profileImage)}');background-size:cover"` : ''; return `<button type="button" class="notification ${item.read ? 'read' : 'unread'}" data-notification-id="${item._id}" data-notification-type="${item.type}" data-notification-actor="${esc(item.actor?.username || '')}" data-notification-post="${item.post?._id || item.post || ''}" data-notification-conversation="${item.conversation?._id || item.conversation || ''}"><div class="avatar avatar-gold"${photo}>${item.actor?.profileImage ? '' : initials(item.actor?.name)}</div><p><b>${esc(item.actor?.name || 'Someone')}</b> ${item.type === 'follow' ? 'started following you' : item.type === 'like' ? 'liked your post' : 'commented on your post'}<small>${when(item.createdAt)}</small></p></button>`; }).join('') || '<p class="empty-profile">You have no notifications yet.</p>';
   } catch (error) { console.warn(error); }
 };
 // The previous code predates the visible top-right switch; restore saved mode.
@@ -979,7 +1007,7 @@ renderPosts = function() {
 
   const renderSelectedMedia = () => {
     $('#media-preview').hidden = !selectedMedia.length;
-    $('#media-preview').innerHTML = selectedMedia.map((item, index) => `<div>${item.type === 'video' ? `<video src="${item.url}"></video>` : `<img src="${item.url}" alt="Selected image">`}${item.type === 'image' ? `<button type="button" data-crop-media="${index}">Crop</button>` : ''}${item.type === 'video' ? `<button type="button" data-trim-media="${index}">Trim</button>` : ''}<button type="button" data-remove-media="${index}" aria-label="Remove media">×</button></div>`).join('');
+    $('#media-preview').innerHTML = selectedMedia.map((item, index) => `<div>${item.type === 'video' ? `<video src="${safeUrl(item.url)}"></video>` : `<img src="${safeUrl(item.url)}" alt="Selected image">`}${item.type === 'image' ? `<button type="button" data-crop-media="${index}">Crop</button>` : ''}${item.type === 'video' ? `<button type="button" data-trim-media="${index}">Trim</button>` : ''}<button type="button" data-remove-media="${index}" aria-label="Remove media">×</button></div>`).join('');
   };
 
   $('#media-input').onchange = async event => {
@@ -1265,7 +1293,7 @@ renderPosts = function() {
 // Direct messages own one predictable open/send/back interaction path.
 (() => {
   const messagesView = $('#messages-view'); if (!messagesView) return;
-  let attachedMedia = null, sending = false, knownIncoming = new Set(), restored = false;
+  let attachedMedia = null, sending = false, knownIncoming = new Set(), restored = false, inboxLoaded = false;
   // Full message history for chats already opened this session, keyed by
   // conversation id. Reopening a chat you've already viewed renders from
   // here instantly instead of waiting on the network; a fresh copy is still
@@ -1280,7 +1308,7 @@ renderPosts = function() {
     const box = document.getElementById('x-message-input');
     if (box && draft) box.value = draft;
   };
-  const avatar = user => { const image=user?.profileImage?` style="background-image:url('${user.profileImage}');background-size:cover"`:''; return `<button class="avatar avatar-gold x-profile-link" type="button" data-profile="${esc(user?.username||'')}"${image}>${user?.profileImage?'':initials(user?.name)}</button>`; };
+  const avatar = user => { const image=user?.profileImage?` style="background-image:url('${safeUrl(user.profileImage)}');background-size:cover"`:''; return `<button class="avatar avatar-gold x-profile-link" type="button" data-profile="${esc(user?.username||'')}"${image}>${user?.profileImage?'':initials(user?.name)}</button>`; };
   const renderAttachPreview = () => {
     const box = document.getElementById('x-attach-preview');
     if (!box) return;
@@ -1288,7 +1316,7 @@ renderPosts = function() {
     const editButton = attachedMedia && attachedMedia.type !== 'audio'
       ? `<button type="button" id="x-edit-attach">${attachedMedia.type === 'video' ? 'Trim' : 'Crop'}</button>`
       : '';
-    box.innerHTML = attachedMedia ? `<div class="chat-preview-item">${attachedMedia.type === 'video' ? `<video src="${attachedMedia.url}"></video>` : attachedMedia.type === 'audio' ? `<span style="display:grid;place-items:center;height:100%;font-size:22px">🎙</span>` : `<img src="${attachedMedia.url}" alt="Attachment preview">`}${editButton}<button type="button" id="x-remove-attach" aria-label="Remove attachment">×</button></div>` : '';
+    box.innerHTML = attachedMedia ? `<div class="chat-preview-item">${attachedMedia.type === 'video' ? `<video src="${safeUrl(attachedMedia.url)}"></video>` : attachedMedia.type === 'audio' ? `<span style="display:grid;place-items:center;height:100%;font-size:22px">🎙</span>` : `<img src="${safeUrl(attachedMedia.url)}" alt="Attachment preview">`}${editButton}<button type="button" id="x-remove-attach" aria-label="Remove attachment">×</button></div>` : '';
   };
   const otherMember = c => c.members.find(member => String(member._id||member.id)!==String(me?.id)) || me;
   const mine = message => String(message.sender?._id||message.sender)===String(me?.id);
@@ -1307,9 +1335,9 @@ renderPosts = function() {
     document.querySelectorAll('#message-count, .bottom-nav-message-count').forEach(badge => { badge.hidden=!total; badge.textContent=label; });
   };
   const requestNotifications = () => { if ('Notification' in window && Notification.permission==='default') Notification.requestPermission(); };
-  const renderInbox = () => { const target=$('#x-conversation-list'); if(!target)return; target.innerHTML=conversations.map(c=>{const other=otherMember(c),last=inboxLast(c),unread=unreadCount(c);return `<div class="x-conversation ${activeChat?._id===c._id?'selected':''} ${unread?'unread':''}" role="button" tabindex="0" data-x-chat="${c._id}">${avatar(other)}<span><b>${esc(other.name)}${verifiedBadge(other)}</b><small>@${esc(other.username)}</small><p>${esc(preview(last))}</p></span><span class="x-conversation-meta"><time>${last?.createdAt?when(last.createdAt):''}</time>${unread?`<i>${unread>99?'99+':unread}</i>`:''}</span></div>`;}).join('')||'<p class="x-empty">No messages yet. Search for a Lion Link member to start one.</p>'; updateBadge(); };
+  const renderInbox = () => { const target=$('#x-conversation-list'); if(!target)return; target.innerHTML=(!inboxLoaded&&!conversations.length)?skeletonPeople(4):conversations.map(c=>{const other=otherMember(c),last=inboxLast(c),unread=unreadCount(c);return `<div class="x-conversation ${activeChat?._id===c._id?'selected':''} ${unread?'unread':''}" role="button" tabindex="0" data-x-chat="${c._id}">${avatar(other)}<span><b>${esc(other.name)}${verifiedBadge(other)}</b><small>@${esc(other.username)}</small><p>${esc(preview(last))}</p></span><span class="x-conversation-meta"><time>${last?.createdAt?when(last.createdAt):''}</time>${unread?`<i>${unread>99?'99+':unread}</i>`:''}</span></div>`;}).join('')||'<p class="x-empty">No messages yet. Search for a Lion Link member to start one.</p>'; updateBadge(); };
   const renderWelcome = () => { $('#x-chat-panel').innerHTML='<section class="x-welcome"><span>✉</span><h2>Your messages</h2><p>Select a conversation or start a new private message.</p><button type="button" class="small-post" data-new-dm>Write a message</button></section>'; renderInbox(); };
-  const renderChat = () => { if(!activeChat)return renderWelcome(); const other=otherMember(activeChat); const rows=(activeChat.messages||[]).map(message=>{const own=mine(message),media=message.media?.url?`<div class="x-message-media">${message.media.type==='video'?`<video controls src="${message.media.url}"></video>`:message.media.type==='audio'?`<audio controls src="${message.media.url}"></audio>`:`<img src="${message.media.url}" alt="Message attachment">`}</div>`:'';const status=own?`<small class="x-status">${message.pending?'Sending':message.readAt?'Read':message.deliveredAt?'Delivered':'Sent'}</small>`:'';return `<article class="x-message ${own?'mine':''}">${own?'':avatar(other)}<div><div class="x-bubble">${media}${message.text?`<p>${esc(message.text)}</p>`:''}</div><time>${when(message.createdAt)} ${status}</time></div></article>`;}).join('')||'<p class="x-empty">Say hello to start the conversation.</p>';
+  const renderChat = () => { if(!activeChat)return renderWelcome(); const other=otherMember(activeChat); const rows=activeChat.loadingMessages?skeletonMessages():(activeChat.messages||[]).map(message=>{const own=mine(message),media=message.media?.url?`<div class="x-message-media">${message.media.type==='video'?`<video controls src="${safeUrl(message.media.url)}"></video>`:message.media.type==='audio'?`<audio controls src="${safeUrl(message.media.url)}"></audio>`:`<img src="${safeUrl(message.media.url)}" alt="Message attachment">`}</div>`:'';const status=own?`<small class="x-status">${message.pending?'Sending':message.readAt?'Read':message.deliveredAt?'Delivered':'Sent'}</small>`:'';return `<article class="x-message ${own?'mine':''}">${own?'':avatar(other)}<div><div class="x-bubble">${media}${message.text?`<p>${esc(message.text)}</p>`:''}</div><time>${when(message.createdAt)} ${status}</time></div></article>`;}).join('')||'<p class="x-empty">Say hello to start the conversation.</p>';
     const presence = other.lastActiveAt && Date.now() - new Date(other.lastActiveAt).getTime() < 2 * 60 * 1000 ? 'Active now' : other.lastActiveAt ? `Last active ${when(other.lastActiveAt)} ago` : '';
     $('#x-chat-panel').innerHTML=`<header class="x-chat-header"><button type="button" data-x-back aria-label="Back to inbox">‹</button>${avatar(other)}<button class="x-chat-person" type="button" data-profile="${esc(other.username)}"><b>${esc(other.name)}${verifiedBadge(other)}</b><small>@${esc(other.username)}${presence ? ` · ${presence}` : ''}</small></button></header><section class="x-message-stream" id="x-message-stream">${rows}</section><form id="x-compose" class="x-compose"><button class="x-emoji" type="button" title="Add emoji" data-emoji>☺</button><label title="Attach photo or video"><span class="ui-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M21.44 11.05l-9.19 9.19a5.5 5.5 0 0 1-7.78-7.78l9.2-9.19a3.5 3.5 0 0 1 4.95 4.95l-9.2 9.19a1.5 1.5 0 0 1-2.12-2.12l8.49-8.48"/></svg></span><input id="x-media-input" type="file" accept="image/*,video/*" hidden></label><textarea id="x-message-input" maxlength="300" rows="1" placeholder="Start a new message"></textarea><button class="small-post" type="submit">Send</button></form><div id="x-attach-preview" class="chat-media-preview"></div>`;
     const stream=$('#x-message-stream');stream.scrollTop=stream.scrollHeight; $('#x-media-input').onchange=async e=>{const file=e.target.files[0];if(!file)return;if(file.size>MAX_UPLOAD_BYTES)return toast('That file is over 60 MB — please choose a smaller one.');try{attachedMedia=await fileData(file);renderAttachPreview();}catch{toast('That attachment could not be read.');}};
@@ -1317,8 +1345,8 @@ renderPosts = function() {
   const renderMessages = () => { messagesView.innerHTML='<header class="page-header x-messages-header"><div><p class="eyebrow">PRIVATE CONVERSATIONS</p><h1>Messages</h1></div><button class="small-post" id="x-new-message" type="button">New message</button></header><div class="x-messages-shell"><aside class="x-inbox"><label class="x-search">⌕<input id="x-inbox-search" type="search" placeholder="Search messages or people"></label><div id="x-conversation-list"></div></aside><section class="x-chat" id="x-chat-panel"></section></div>';$('.x-messages-shell').classList.toggle('x-chat-open',!!activeChat);activeChat?renderChat():renderWelcome();$('#x-new-message').onclick=openNew;$('#x-inbox-search').oninput=e=>search(e.target.value); };
   const openNew = () => { requestNotifications(); $('#user-search-modal').hidden=false; $('#user-search-input').value=''; $('#user-search-results').innerHTML='<p class="empty-profile">Search registered Lion Link users.</p>'; $('#user-search-input').focus(); };
   const search = async value => { const query=value.trim().toLowerCase(); if(!query){renderInbox();return;} const local=conversations.filter(c=>`${otherMember(c).name} ${otherMember(c).username}`.toLowerCase().includes(query)); $('#x-conversation-list').innerHTML=local.map(c=>`<div class="x-conversation" role="button" tabindex="0" data-x-chat="${c._id}">${avatar(otherMember(c))}<span><b>${esc(otherMember(c).name)}</b><small>@${esc(otherMember(c).username)}</small><p>${esc(preview(inboxLast(c)))}</p></span></div>`).join(''); try{const {users}=await api('/users/search/'+encodeURIComponent(query));const unseen=users.filter(u=>!conversations.some(c=>otherMember(c).username===u.username));if(unseen.length)$('#x-conversation-list').insertAdjacentHTML('beforeend',`<p class="x-search-heading">People</p>${unseen.map(u=>`<div class="x-conversation" role="button" tabindex="0" data-start-dm="${esc(u.username)}">${avatar(u)}<span><b>${esc(u.name)}</b><small>@${esc(u.username)}</small><p>Start a conversation</p></span></div>`).join('')}`);}catch{} };
-  loadChats = async function(){const result=await api('/conversations');const before=new Set(knownIncoming), previous=activeChat;conversations=(result.conversations||[]).sort((a,b)=>new Date(b.updatedAt)-new Date(a.updatedAt));conversations.forEach(c=>{const message=inboxLast(c);if(message&&!mine(message)&&!message.readAt){const key=`${c._id}:${message._id}`;if(knownIncoming.size&&!before.has(key)&&Notification.permission==='granted')new Notification(otherMember(c).name,{body:preview(message),tag:key});knownIncoming.add(key);}});if(previous){const summary=conversations.find(c=>c._id===previous._id);activeChat=summary?{...summary,messages:previous.messages||[]}:null;}renderMessages();};
-  openChat = async id => { const summary=conversations.find(c=>c._id===id);if(!summary)return;const cached=conversationCache.get(id);activeChat={...summary,messages:cached||(activeChat?._id===id?activeChat.messages||[]:[])};show('messages');persist();renderMessages();try{const {conversation}=await api(`/conversations/${id}?limit=50`);if(activeChat?._id!==id)return;activeChat=conversation;conversationCache.set(id,conversation.messages||[]);renderMessages();if(unreadCount(summary)){await api(`/conversations/${id}/read`,{method:'POST'});activeChat.messages.forEach(message=>{if(!mine(message))message.readAt=new Date().toISOString();});await loadChats();}}catch(error){toast(error.message);}};
+  loadChats = async function(){let result;try{result=await api('/conversations');}finally{inboxLoaded=true;}const before=new Set(knownIncoming), previous=activeChat;conversations=(result.conversations||[]).sort((a,b)=>new Date(b.updatedAt)-new Date(a.updatedAt));conversations.forEach(c=>{const message=inboxLast(c);if(message&&!mine(message)&&!message.readAt){const key=`${c._id}:${message._id}`;if(knownIncoming.size&&!before.has(key)&&Notification.permission==='granted')new Notification(otherMember(c).name,{body:preview(message),tag:key});knownIncoming.add(key);}});if(previous){const summary=conversations.find(c=>c._id===previous._id);activeChat=summary?{...summary,messages:previous.messages||[]}:null;}renderMessages();};
+  openChat = async id => { const summary=conversations.find(c=>c._id===id);if(!summary)return;const cached=conversationCache.get(id)||(summary.isNew?[]:undefined);const hadMessages=!!cached||(activeChat?._id===id&&(activeChat.messages||[]).length>0);activeChat={...summary,messages:cached||(activeChat?._id===id?activeChat.messages||[]:[]),loadingMessages:!hadMessages};show('messages');persist();renderMessages();try{const {conversation}=await api(`/conversations/${id}?limit=50`);if(activeChat?._id!==id)return;activeChat=conversation;conversationCache.set(id,conversation.messages||[]);renderMessages();if(unreadCount(summary)){await api(`/conversations/${id}/read`,{method:'POST'});activeChat.messages.forEach(message=>{if(!mine(message))message.readAt=new Date().toISOString();});await loadChats();}}catch(error){if(activeChat?._id===id){activeChat.loadingMessages=false;renderMessages();}toast(error.message);}};
   const startDM = async username => {try{const {conversation}=await api('/conversations',{method:'POST',body:JSON.stringify({username}),showLoading:true});await loadChats();$('#user-search-modal').hidden=true;await openChat(conversation._id);}catch(error){toast(error.message);}};
   document.addEventListener('click',e=>{const chat=e.target.closest('[data-x-chat]');if(chat&&!e.target.closest('[data-profile]')){e.preventDefault();openChat(chat.dataset.xChat);}if(e.target.closest('[data-x-back]')){activeChat=null;persist();renderMessages();}if(e.target.closest('[data-new-dm]'))openNew();const start=e.target.closest('[data-start-dm]');if(start)startDM(start.dataset.startDm);if(e.target.closest('[data-emoji]')){$('#x-message-input').value+='😊';$('#x-message-input').focus();}if(e.target.id==='x-remove-attach'){attachedMedia=null;renderAttachPreview();const input=document.getElementById('x-media-input');if(input)input.value='';}
 if(e.target.id==='x-edit-attach'&&attachedMedia){
@@ -1334,14 +1362,8 @@ if(e.target.id==='x-edit-attach'&&attachedMedia){
   const restore=()=>{if(restored||!me)return;restored=true;try{const state=JSON.parse(localStorage.getItem('lionLinkViewState')||'{}');if(state.view){show(state.view);if(state.view==='messages'&&state.chat)openChat(state.chat);}}catch{}};const baseIdentity=identity;identity=function(){baseIdentity();restore();};
   renderMessages(); if(token) loadChats().catch(()=>{}); setInterval(()=>{if(token&&document.visibilityState==='visible')loadChats().catch(()=>{});},60000);
 
-  // Show the entry spinner until the first feed request settles, including a
-  // refresh, while leaving normal taps responsive.
-  const feedLoad = loadPosts;
-  loadPosts = async function(options = {}) {
-    if (!options.silent) loadingOverlay.classList.add('show');
-    try { return await feedLoad(options); }
-    finally { if (!options.silent) loadingOverlay.classList.remove('show'); }
-  };
+  // (The feed now shows skeleton placeholders while it loads instead of a
+  // full-screen spinner, so no wrapper is needed here.)
 })();
 
 // Message action and attachment reliability layer.
@@ -1411,7 +1433,7 @@ if(e.target.id==='x-edit-attach'&&attachedMedia){
     const media = event.target.closest('.x-message-media img,.x-message-media video');
     if (!media) return;
     event.preventDefault(); event.stopPropagation();
-    const visual = media.tagName === 'VIDEO' ? `<video controls autoplay src="${media.currentSrc || media.src}"></video>` : `<img src="${media.currentSrc || media.src}" alt="Message attachment">`;
+    const visual = media.tagName === 'VIDEO' ? `<video controls autoplay src="${safeUrl(media.currentSrc || media.src)}"></video>` : `<img src="${safeUrl(media.currentSrc || media.src)}" alt="Message attachment">`;
     $('#media-modal-content').innerHTML = `<div class="modal-media">${visual}</div>`;
     $('#media-modal').hidden = false;
   }, true);
@@ -1485,10 +1507,10 @@ document.addEventListener('click', event => {
   if (!tile || event.target.closest('button')) return;
   const img = tile.querySelector('img'), video = tile.querySelector('video');
   if (img) {
-    $('#media-modal-content').innerHTML = `<div class="modal-media"><img src="${img.src}" alt="Selected media"></div>`;
+    $('#media-modal-content').innerHTML = `<div class="modal-media"><img src="${safeUrl(img.src)}" alt="Selected media"></div>`;
     $('#media-modal').hidden = false;
   } else if (video) {
-    $('#media-modal-content').innerHTML = `<div class="modal-media"><video controls autoplay src="${video.src}"></video></div>`;
+    $('#media-modal-content').innerHTML = `<div class="modal-media"><video controls autoplay src="${safeUrl(video.src)}"></video></div>`;
     $('#media-modal').hidden = false;
   }
 });
@@ -1546,6 +1568,8 @@ document.addEventListener('click', event => {
     });
   }
 
+  window.openPostFromPath = openPostFromPath;
+
   const viewForPath = path => {
     const known = ['profile', 'post', 'messages', 'announcements', 'groups', 'group', 'events', 'admin', 'notifications', 'feed'];
     const segment = path.replace(/^\//, '').split('/')[0];
@@ -1575,3 +1599,169 @@ document.addEventListener('click', event => {
     }
   }
 })();
+
+
+// =====================================================================
+// Polish layer: comment layout, skeleton loaders, all-comments Replies tab,
+// instant Message button, and Terms / Privacy / About links.
+// Kept together at the end of the file so it runs after every earlier layer.
+// =====================================================================
+
+// ---- Styles for the pieces below (injected so no stylesheet edit is needed) ----
+(() => {
+  const style = document.createElement('style');
+  style.textContent = `
+    /* skeleton loaders */
+    .sk{display:block;background:linear-gradient(90deg,rgba(128,128,128,.16) 25%,rgba(128,128,128,.30) 37%,rgba(128,128,128,.16) 63%);background-size:400% 100%;animation:sk-shimmer 1.4s ease infinite;border-radius:8px}
+    @keyframes sk-shimmer{0%{background-position:100% 50%}100%{background-position:0 50%}}
+    @media (prefers-reduced-motion:reduce){.sk{animation:none}}
+    .sk-post,.sk-person{display:flex;gap:12px;padding:14px 16px;align-items:flex-start}
+    .sk-post{border-bottom:1px solid rgba(128,128,128,.2)}
+    .sk-avatar{width:44px;height:44px;border-radius:50%;flex:none}
+    .sk-lines{flex:1;display:grid;gap:9px;min-width:0}
+    .sk-line{height:12px;width:100%}
+    .sk-line.short{width:38%}
+    .sk-line.mid{width:68%}
+    .sk-img{height:170px;width:100%;margin-top:4px;border-radius:12px}
+    .sk-msg{display:flex;padding:6px 14px}
+    .sk-msg.mine{justify-content:flex-end}
+    .sk-bubble{height:38px;border-radius:19px}
+    .sk-reply{display:grid;gap:9px;padding:16px;border-bottom:1px solid rgba(128,128,128,.2)}
+
+    /* comments: the commenter's name on its own line, their words underneath */
+    .comment-line p .comment-author{display:flex;align-items:center;gap:4px;width:fit-content;max-width:100%;text-align:left;margin:0 0 3px}
+    .comment-line p{overflow-wrap:anywhere}
+
+    /* profile "Replies" cards */
+    .profile-reply{display:grid;gap:7px;padding:14px 16px;border-bottom:1px solid rgba(128,128,128,.2);cursor:pointer}
+    .profile-reply:hover,.profile-reply:focus-visible{background:rgba(128,128,128,.08);outline:none}
+    .profile-reply-context{opacity:.7;font-size:13px}
+    .profile-reply-post{margin:0;opacity:.75;font-size:14px;padding-left:10px;border-left:3px solid rgba(128,128,128,.35);overflow-wrap:anywhere}
+    .profile-reply-text{margin:0;overflow-wrap:anywhere}
+
+    /* Terms / Privacy / About at the bottom of the left drawer */
+    #mobile-left-drawer:not([hidden]){display:flex;flex-direction:column}
+    .drawer-legal{margin-top:auto;padding:14px 4px 8px;border-top:1px solid rgba(128,128,128,.25);display:flex;flex-wrap:wrap;gap:6px 16px;font-size:13px}
+    .drawer-legal a{color:inherit;opacity:.8;text-decoration:none}
+    .drawer-legal a:hover,.drawer-legal a:focus-visible{opacity:1;text-decoration:underline}
+  `;
+  document.head.appendChild(style);
+})();
+
+// ---- A returning, signed-in person sees feed skeletons straight away, not a blank page ----
+if (token) $('#post-feed').innerHTML = skeletonPosts(4);
+
+// If the feed fails to load, replace the skeletons with a message instead of shimmering forever.
+{
+  const loadPostsBase = loadPosts;
+  loadPosts = async function(options = {}) {
+    try { return await loadPostsBase(options); }
+    catch (error) {
+      if (!posts.length) $('#post-feed').innerHTML = '<p class="empty-profile">Could not load posts right now. Tap Refresh to try again.</p>';
+      throw error;
+    }
+  };
+}
+
+// ---- Opening a profile always starts on its Posts tab ----
+{
+  const renderProfileBase2 = renderProfile;
+  renderProfile = function(user) {
+    renderProfileBase2(user);
+    document.querySelectorAll('[data-profile-tab]').forEach(tab => tab.classList.toggle('selected', tab.dataset.profileTab === 'posts'));
+  };
+}
+
+// ---- Replies tab: every comment the person has ever made, across all posts ----
+(() => {
+  const replyCard = ({ postId, postText, postAuthor, comment }) => `
+    <article class="profile-reply" data-reply-post="${esc(postId)}" role="button" tabindex="0">
+      <small class="profile-reply-context">Replied to <b>${esc(postAuthor?.name || 'a Lion Link user')}</b>${postAuthor?.username ? ` @${esc(postAuthor.username)}` : ''}${comment.createdAt ? ` · ${when(comment.createdAt)}` : ''}</small>
+      ${postText ? `<p class="profile-reply-post">${esc(postText)}</p>` : ''}
+      <p class="profile-reply-text">${esc(comment.text)}</p>
+    </article>`;
+
+  // Capture phase + stopImmediatePropagation so the older tab handler (which
+  // only filtered the loaded feed) never runs for this tab.
+  document.addEventListener('click', async event => {
+    const tab = event.target.closest('[data-profile-tab="replies"]');
+    if (!tab) return;
+    event.preventDefault();
+    event.stopImmediatePropagation();
+    document.querySelectorAll('[data-profile-tab]').forEach(other => other.classList.toggle('selected', other === tab));
+    const username = (viewedProfile || me)?.username;
+    if (!username) return;
+    const box = $('#profile-posts');
+    box.innerHTML = skeletonReplies(3);
+    try {
+      const { replies } = await api(`/users/${encodeURIComponent(username)}/replies`);
+      if (!tab.classList.contains('selected')) return; // they moved to another tab while this loaded
+      box.innerHTML = replies.map(replyCard).join('') || '<p class="empty-profile">No replies yet.</p>';
+    } catch (error) {
+      if (tab.classList.contains('selected')) box.innerHTML = '<p class="empty-profile">Could not load replies right now.</p>';
+      toast(error.message);
+    }
+  }, true);
+
+  const openReplyPost = card => {
+    const id = card.dataset.replyPost;
+    if (!id) return;
+    history.pushState({ view: 'post' }, '', `/post/${id}`);
+    window.openPostFromPath?.(id);
+  };
+  document.addEventListener('click', event => { const card = event.target.closest('[data-reply-post]'); if (card) openReplyPost(card); });
+  document.addEventListener('keydown', event => {
+    const card = event.target.closest?.('[data-reply-post]');
+    if (card && (event.key === 'Enter' || event.key === ' ')) { event.preventDefault(); openReplyPost(card); }
+  });
+})();
+
+// ---- Message button on a profile: open instantly ----
+// Before: waited for the server to create/find the chat, then reloaded the
+// whole inbox, and only then opened it. Now: a chat you already have opens
+// with no waiting at all; a brand-new one opens straight into a skeleton and
+// is created in the background.
+$('.message-profile').onclick = async () => {
+  const user = viewedProfile;
+  if (!user) return;
+  const existing = conversations.find(c => (c.members || []).some(member => String(member.username) === String(user.username)));
+  if (existing) { openChat(existing._id); return; }
+
+  show('messages');
+  const shell = document.querySelector('.x-messages-shell');
+  const panel = $('#x-chat-panel');
+  shell?.classList.add('x-chat-open');
+  if (panel) panel.innerHTML = `<header class="x-chat-header"><span class="sk sk-avatar"></span><span class="sk-lines" style="max-width:180px"><span class="sk sk-line mid"></span><span class="sk sk-line short"></span></span></header><section class="x-message-stream">${skeletonMessages()}</section>`;
+  try {
+    const { conversation } = await api('/conversations', { method: 'POST', body: JSON.stringify({ username: user.username }) });
+    if (!conversations.some(c => c._id === conversation._id)) {
+      conversations.unshift({ _id: conversation._id, members: [me, user], messages: [], updatedAt: new Date().toISOString(), isNew: true });
+    }
+    await openChat(conversation._id);
+    loadChats().catch(() => {}); // quietly bring the inbox up to date afterwards
+  } catch (error) {
+    shell?.classList.remove('x-chat-open');
+    if (panel) panel.innerHTML = '<p class="x-empty">Could not open that conversation. Please try again.</p>';
+    toast(error.message);
+  }
+};
+
+// ---- Terms & Conditions, Privacy and About at the bottom of the left drawer ----
+// Reuses the info-modal system already wired up for the footer's Help/
+// Privacy/Terms buttons (see `const info = {...}` and the document click
+// listener that reads info[key]) rather than inventing separate pages.
+{
+  info.privacy = ['Privacy', "Lion Link is for verified UNN students. Signing up stores your name, username, UNN email, and password (encrypted, never shown to anyone). What you post, comment, and message is stored so the app can show it to you and other members \u2014 posts and profiles are visible to signed-in Lion Link members, direct messages are visible only to the people in that conversation. Photos and videos you upload are stored with our media host (Cloudflare R2) and linked from your posts, stories, and messages. Lion Link Admin can view reported posts to moderate them. We don't sell your data or share it outside Lion Link. You can edit or remove your profile details, posts, and photos at any time from your profile and post menus. Questions or data requests: lionlinkadmin@gmail.com."];
+  info.terms = ['Terms & Conditions', "By using Lion Link you agree to keep it a safe space for the UNN community: no harassment, hate speech, impersonation, or unlawful content, and no sharing someone else's private information without consent. Content you post is yours \u2014 you're responsible for it, and Lion Link Admin may remove posts or suspend accounts that break these rules or get reported. Don't use Lion Link to spam, scrape, or attempt to access accounts that aren't yours. Lion Link is provided as-is by fellow students, without guarantees of uninterrupted access. Continued use of the app after these terms change means you accept the update. Contact lionlinkadmin@gmail.com with any concerns."];
+  info.about = ['About Lion Link', "Lion Link is the campus social platform for University of Nigeria, Nsukka students \u2014 a place to share what's happening around campus in one home feed, post 24-hour stories, follow and message other students, join or start groups, keep up with campus events, and get official updates through admin-verified announcements. It's built by and for the UNN community."];
+
+  const renderMobileDrawersBase = renderMobileDrawers;
+  renderMobileDrawers = function(users) {
+    renderMobileDrawersBase(users);
+    const left = $('#mobile-left-drawer');
+    if (left && !left.querySelector('.drawer-legal')) {
+      left.insertAdjacentHTML('beforeend', '<nav class="drawer-legal" aria-label="About Lion Link"><button type="button" data-info="terms">Terms &amp; Conditions</button><button type="button" data-info="privacy">Privacy</button><button type="button" data-info="about">About</button></nav>');
+    }
+  };
+  document.addEventListener('click', event => { if (event.target.closest('.mobile-drawer [data-info]')) closeDrawers?.(); });
+}
