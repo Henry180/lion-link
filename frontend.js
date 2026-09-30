@@ -97,7 +97,10 @@ $('#login-form').onsubmit=async event=>{event.preventDefault();if(authSubmitting
 async function uploadToR2(uploadFile){
   const { uploadUrl, publicUrl } = await api('/uploads/presign', {
     method: 'POST',
-    body: JSON.stringify({ filename: uploadFile.name || 'upload', contentType: uploadFile.type })
+    // fileSize lets the server sign the upload for exactly this many bytes
+    // (see routes/uploads.js) — if this doesn't match what's actually sent,
+    // R2 rejects the upload rather than silently allowing an oversized one.
+    body: JSON.stringify({ filename: uploadFile.name || 'upload', contentType: uploadFile.type, fileSize: uploadFile.size })
   });
   const putResponse = await fetch(uploadUrl, {
     method: 'PUT',
@@ -1777,3 +1780,67 @@ $('.message-profile').onclick = async () => {
   };
   document.addEventListener('click', event => { if (event.target.closest('.mobile-drawer [data-info]')) closeDrawers?.(); });
 }
+
+
+// =====================================================================
+// Avatar click: view the profile photo directly when there's no story
+// running; when there IS a story, offer a choice instead of jumping
+// straight into it.
+// =====================================================================
+(() => {
+  const choiceModal = document.createElement('div');
+  choiceModal.className = 'edit-modal';
+  choiceModal.id = 'avatar-choice-modal';
+  choiceModal.hidden = true;
+  choiceModal.innerHTML = `
+    <section class="edit-card">
+      <button class="modal-close" type="button" data-close-modal="avatar-choice-modal" aria-label="Close">×</button>
+      <h2>What would you like to view?</h2>
+      <div style="display:flex;flex-direction:column;gap:10px;margin-top:14px">
+        <button type="button" class="small-post" id="avatar-choice-story">View story</button>
+        <button type="button" class="small-post" id="avatar-choice-photo">View profile photo</button>
+        <button type="button" id="avatar-choice-profile">View profile</button>
+      </div>
+    </section>`;
+  document.body.append(choiceModal);
+  choiceModal.querySelector('[data-close-modal]').onclick = () => { choiceModal.hidden = true; };
+  choiceModal.addEventListener('click', event => { if (event.target === choiceModal) choiceModal.hidden = true; });
+
+  // The avatar button already carries its photo as an inline
+  // background-image style when the person has one set (see postMarkup /
+  // personMarkup) — reading it straight off the element avoids a network
+  // call just to find out what photo to show.
+  const photoUrlFrom = target => {
+    const match = /url\((['"]?)(.*?)\1\)/.exec(target.style.backgroundImage || '');
+    return match ? safeUrl(match[2]) : '';
+  };
+
+  const showPhoto = url => {
+    $('#media-modal-content').innerHTML = `<div class="modal-media"><img src="${url}" alt="Profile photo"></div>`;
+    $('#media-modal').hidden = false;
+  };
+
+  document.addEventListener('click', event => {
+    const target = event.target.closest('[data-avatar],[data-profile-avatar]');
+    if (!target) return;
+    event.preventDefault();
+    event.stopImmediatePropagation(); // take over from the older avatar-click handlers earlier in this file
+    const username = target.dataset.avatar || target.dataset.profileAvatar;
+    const story = stories.find(s => s.author?.username === username);
+    const photoUrl = photoUrlFrom(target);
+
+    if (!story) {
+      // No story running: go straight to the profile photo if there is
+      // one, otherwise there's nothing to preview, so open the profile.
+      if (photoUrl) showPhoto(photoUrl); else openProfile(username);
+      return;
+    }
+
+    // A story is running: let the person choose rather than deciding for them.
+    $('#avatar-choice-story').onclick = () => { choiceModal.hidden = true; openStory(story); };
+    $('#avatar-choice-photo').onclick = () => { choiceModal.hidden = true; if (photoUrl) showPhoto(photoUrl); else openProfile(username); };
+    $('#avatar-choice-profile').onclick = () => { choiceModal.hidden = true; openProfile(username); };
+    $('#avatar-choice-photo').hidden = false;
+    choiceModal.hidden = false;
+  }, true);
+})();
