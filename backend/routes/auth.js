@@ -8,6 +8,40 @@ const crypto = require("crypto");
 
 const router = express.Router();
 
+// =====================================================
+// LIGHTWEIGHT RATE LIMITING
+// =====================================================
+// Login, registration, password-reset requests, and admin-invite attempts
+// had no limit at all — an attacker could try passwords or invite codes as
+// fast as the network allowed. This is a small in-memory limiter (no new
+// dependency needed) keyed by IP + route: a modest number of attempts per
+// window, then a short cooldown. It resets on every deploy/restart, which
+// is an acceptable trade-off for a single-instance Render deployment; if
+// you ever run multiple instances, this should move to a shared store
+// (e.g. Redis) instead, since each instance would otherwise count separately.
+const attempts = new Map();
+function rateLimit(name, max, windowMs) {
+  return (req, res, next) => {
+    const key = `${name}:${req.ip}`;
+    const now = Date.now();
+    const record = attempts.get(key);
+    if (!record || now - record.start > windowMs) {
+      attempts.set(key, { start: now, count: 1 });
+      return next();
+    }
+    if (record.count >= max) {
+      return res.status(429).json({ message: "Too many attempts. Please wait a few minutes and try again." });
+    }
+    record.count += 1;
+    next();
+  };
+}
+// Occasionally forget old entries so this Map doesn't grow forever.
+setInterval(() => {
+  const cutoff = Date.now() - 30 * 60 * 1000;
+  for (const [key, record] of attempts) if (record.start < cutoff) attempts.delete(key);
+}, 10 * 60 * 1000);
+
 const issueToken = user => jwt.sign({ userId: user._id, role: user.role }, process.env.JWT_SECRET, { expiresIn: "7d" });
 const usernameFrom = value => String(value || "lion").toLowerCase().replace(/[^a-z0-9_]/g, "").slice(0, 16) || "lion";
 async function uniqueGoogleUsername(name) { const base = usernameFrom(name); let username = base.length >= 3 ? base : `${base}user`; let number = 0; while (await User.exists({ username })) username = `${base.slice(0, 15)}${++number}`; return username; }
@@ -19,12 +53,18 @@ async function uniqueGoogleUsername(name) { const base = usernameFrom(name); let
 
 async function register(req, res) {
   try {
-    const { name, email, password, username: requestedUsername } = req.body;
+    const rawName = req.body.name, rawEmail = req.body.email, { password, username: requestedUsername } = req.body;
+    const name = String(rawName || "").trim().slice(0, 30);
+    const email = String(rawEmail || "").trim().toLowerCase().slice(0, 254);
 
     if (!name || !email || !password) {
       return res.status(400).json({
         message: "Name, email and password are required"
       });
+    }
+
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      return res.status(400).json({ message: "Please enter a valid email address" });
     }
 
     if (password.length < 6) {
@@ -34,7 +74,7 @@ async function register(req, res) {
     }
 
     const existingUser = await User.findOne({
-      email: email.toLowerCase()
+      email
     });
 
     if (existingUser) {
@@ -51,7 +91,7 @@ async function register(req, res) {
 
     const user = await User.create({
       name,
-      email: email.toLowerCase(),
+      email,
       password: hashedPassword,
       username
     });
@@ -81,8 +121,6 @@ async function register(req, res) {
     });
 
   } catch (error) {
-    // The pre-check above improves the normal case, but two simultaneous
-    // registrations can still race to MongoDB's unique index.
     if (error?.code === 11000) {
       const field = Object.keys(error.keyPattern || {})[0];
       const message = field === "username" ? "That username is already taken" : "An account with this email already exists. Please log in instead.";
@@ -95,10 +133,9 @@ async function register(req, res) {
     });
   }
 }
-router.post("/register", register);
-router.post("/signup", register);
+router.post("/register", rateLimit("register", 10, 15 * 60 * 1000), register);
+router.post("/signup", rateLimit("register", 10, 15 * 60 * 1000), register);
 
-// Google OAuth is enabled when GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET and APP_URL are configured.
 router.get("/google", (req, res) => {
   if (!process.env.GOOGLE_CLIENT_ID || !process.env.GOOGLE_CLIENT_SECRET || !process.env.APP_URL) return res.status(503).send("Google sign-in has not been configured yet.");
   const redirect = `${req.protocol}://${req.get("host")}/api/auth/google/callback`;
@@ -117,7 +154,13 @@ router.get("/google/callback", async (req, res) => {
     if (!user) user = await User.create({ name: profile.name || profile.email.split("@")[0], email: profile.email.toLowerCase(), username: await uniqueGoogleUsername(profile.email.split("@")[0]), googleSubject: profile.sub, profileImage: profile.picture || "" });
     else if (!user.googleSubject) { user.googleSubject = profile.sub; if (!user.profileImage && profile.picture) user.profileImage = profile.picture; await user.save(); }
     res.redirect(`${process.env.APP_URL.replace(/\/$/, "")}/?google_token=${encodeURIComponent(issueToken(user))}`);
-  } catch (error) { res.redirect(`${(process.env.APP_URL || "").replace(/\/$/, "")}/?google_error=${encodeURIComponent(error.message)}`); }
+  } catch (error) {
+    // The raw error (which can include third-party API response text) is
+    // logged for debugging, but never sent to the browser — it could reveal
+    // internal details to anyone who triggers a failed Google sign-in.
+    console.error("Google sign-in error:", error?.message || error);
+    res.redirect(`${(process.env.APP_URL || "").replace(/\/$/, "")}/?google_error=${encodeURIComponent("Google sign-in failed. Please try again.")}`);
+  }
 });
 
 router.post("/session", auth, async (req, res) => {
@@ -142,21 +185,28 @@ router.patch("/me", auth, async (req, res) => {
   res.json({ user: { id:user._id, name:user.name, email:user.email, username:user.username, role:user.role, bio:user.bio, profileImage:user.profileImage, coverImage:user.coverImage, location:user.location, createdAt:user.createdAt } });
 });
 
-router.post("/become-admin", auth, async (req, res) => {
+router.post("/become-admin", auth, rateLimit("become-admin", 8, 15 * 60 * 1000), async (req, res) => {
   const code = String(req.body.code || "").trim().toUpperCase();
   const codeHash = crypto.createHash("sha256").update(code).digest("hex");
-  const invite = await AdminInvite.findOne({ codeHash, usedBy: null, expiresAt: { $gt: new Date() } });
-  if (!invite) return res.status(400).json({ message: "That admin invite code is invalid or has expired." });
   const user = await User.findById(req.user.userId);
+  // Check-and-claim in one atomic update: findOne() followed by a separate
+  // save() left a gap where two simultaneous requests could both pass the
+  // "is this code still unused" check before either marked it used — a
+  // single-use invite could grant admin to two different people. Matching
+  // on usedBy: null and setting it in the same operation closes that gap:
+  // whichever request gets there first is the only one that can succeed.
+  const invite = await AdminInvite.findOneAndUpdate(
+    { codeHash, usedBy: null, expiresAt: { $gt: new Date() } },
+    { usedBy: user._id, usedAt: new Date() },
+    { new: false }
+  );
+  if (!invite) return res.status(400).json({ message: "That admin invite code is invalid or has expired." });
   user.role = "admin"; await user.save();
-  invite.usedBy = user._id; invite.usedAt = new Date(); await invite.save();
   const token = jwt.sign({ userId: user._id, role: user.role }, process.env.JWT_SECRET, { expiresIn: "7d" });
   res.json({ token, user: { id: user._id, name: user.name, email: user.email, username: user.username, role: user.role, bio: user.bio, profileImage: user.profileImage, coverImage: user.coverImage, location: user.location, createdAt: user.createdAt } });
 });
 
-// Password recovery is always tied to the email used when the account was created.
-// Configure RESEND_API_KEY and MAIL_FROM in production to deliver the reset email.
-router.post("/forgot-password", async (req, res) => {
+router.post("/forgot-password", rateLimit("forgot-password", 5, 15 * 60 * 1000), async (req, res) => {
   const email = String(req.body.email || "").trim().toLowerCase();
   const user = email && await User.findOne({ email });
   if (user) {
@@ -188,7 +238,7 @@ router.post("/reset-password", async (req, res) => {
 // LOGIN
 // =====================================================
 
-router.post("/login", async (req, res) => {
+router.post("/login", rateLimit("login", 10, 15 * 60 * 1000), async (req, res) => {
   try {
     const { email, identity, password } = req.body;
 
