@@ -2598,25 +2598,6 @@ body.dark .x-compose textarea { background:#000; color:#fff; }
   object-fit: contain;
 }
 
-/* The Crop and Remove buttons in the "ready to post" preview were both
-   positioned at the exact same spot (top:6px; right:6px) — not merely
-   close together, but literally stacked on identical coordinates,
-   with Remove rendering on top since it comes later in the markup.
-   Moving Crop to the opposite corner as a small labeled pill keeps both
-   fully visible and clearly separate. */
-.media-preview button[data-crop-media] {
-  left: 6px;
-  right: auto;
-  top: 6px;
-  width: auto;
-  height: auto;
-  padding: 4px 9px;
-  border-radius: 6px;
-  background: rgba(0, 0, 0, 0.7);
-  font-size: 11px;
-  font-weight: 700;
-}
-
 /* Chat attachment preview: the Crop/Trim button and the Remove button
    would otherwise both land on the exact same top-right spot, the same
    overlap bug the composer's preview had. Also sized up slightly so a
@@ -2660,4 +2641,73 @@ body.dark .x-compose textarea { background:#000; color:#fff; }
   font-size: 9px;
   font-style: normal;
   line-height: 1;
+}
+
+
+/* =========================================================
+   COMPOSER MEDIA TILES — instant preview, loader, Crop / Trim
+   ========================================================= */
+.media-preview .media-tile { position: relative; }
+.media-preview button.media-edit {
+  left: 6px;
+  right: auto;
+  top: auto;
+  bottom: 6px;
+  width: auto;
+  height: auto;
+  padding: 4px 9px;
+  border-radius: 6px;
+  background: rgba(0, 0, 0, 0.75);
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1.2;
+}
+.media-uploading {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  display: grid;
+  place-items: center;
+  background: rgba(0, 0, 0, 0.38);
+}
+.media-uploading i {
+  width: 24px;
+  height: 24px;
+  border: 3px solid rgba(255, 255, 255, 0.35);
+  border-top-color: #fff;
+  border-radius: 50%;
+  animation: media-spin 0.8s linear infinite;
+}
+@keyframes media-spin { to { transform: rotate(360deg); } }
+#submit-post:disabled,
+#quick-post-form .small-post:disabled { opacity: 0.55; cursor: not-allowed; }
+
+/* =========================================================
+   INFO PAGES — Terms, Privacy, About
+   ========================================================= */
+.info-card { width: min(680px, 100%); padding: 34px 38px 32px; }
+.info-card h2 {
+  margin: 0 0 6px;
+  padding-bottom: 16px;
+  border-bottom: 1px solid var(--line);
+  font-size: 26px;
+  line-height: 1.2;
+}
+.info-content { font-size: 15px; line-height: 1.7; }
+.info-content > section:first-child p { font-size: 16px; color: var(--ink); }
+.info-content h3 {
+  margin: 26px 0 8px;
+  font: 700 16px "DM Sans", sans-serif;
+  letter-spacing: 0.01em;
+  color: var(--ink);
+}
+.info-content p { margin: 0 0 12px; color: var(--muted, #5b6470); }
+.info-content ul { margin: 0 0 12px; padding-left: 22px; }
+.info-content li { margin-bottom: 7px; color: var(--muted, #5b6470); }
+.info-content li::marker { color: var(--green, #007a3d); }
+.info-content a { color: var(--green, #007a3d); font-weight: 600; text-decoration: none; }
+.info-content a:hover { text-decoration: underline; }
+@media (max-width: 640px) {
+  .info-card { padding: 28px 22px 24px; }
+  .info-card h2 { font-size: 22px; }
 }
