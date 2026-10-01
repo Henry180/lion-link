@@ -128,11 +128,11 @@ router.get("/:username/replies", auth, async (req, res) => {
 router.get("/:username", auth, async (req, res) => {
   const username = String(req.params.username).toLowerCase().replace(/^@/, "");
   const [user, viewer] = await Promise.all([
-    User.findOne({ username }).select("name username role bio profileImage coverImage location followers following createdAt lastActiveAt"),
-    User.findById(req.user.userId).select("following")
+    User.findOne({ username }).select("name username role bio profileImage coverImage location followers following createdAt lastActiveAt").lean(),
+    User.findById(req.user.userId).select("following").lean()
   ]);
   if (!user) return res.status(404).json({ message: "User not found" });
-  res.json({ user: { ...publicUser(user), isFollowing: viewer?.following.some(id => id.equals(user._id)) || false } });
+  res.json({ user: { ...publicUser(user), isFollowing: viewer?.following?.some(id => id.equals(user._id)) || false } });
 });
 
 router.post("/:username/follow", auth, async (req, res) => {
