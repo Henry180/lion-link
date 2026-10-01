@@ -1,4 +1,5 @@
 const router = require("express").Router();
+const mongoose = require("mongoose");
 const Conversation = require("../models/Conversation");
 const User = require("../models/User");
 const Notification = require("../models/Notification");
@@ -52,13 +53,33 @@ const inboxItem = conversation => {
   };
 };
 
+// How many messages from the other person the viewer has not opened yet, per
+// conversation. The inbox only carries the last message, so this is counted
+// separately; the frontend shows it as the badge on each DM and sums it for
+// the Messages nav badge.
+async function unreadCounts(userId) {
+  const viewer = new mongoose.Types.ObjectId(String(userId));
+  const rows = await Conversation.aggregate([
+    { $match: { members: viewer } },
+    { $project: { unread: { $size: { $filter: {
+      input: { $ifNull: ["$messages", []] },
+      as: "m",
+      cond: { $and: [ { $ne: ["$$m.sender", viewer] }, { $eq: [{ $ifNull: ["$$m.readAt", null] }, null] } ] }
+    } } } } }
+  ]);
+  return new Map(rows.map(row => [String(row._id), row.unread]));
+}
+
 router.get("/", auth, safe(async (req, res) => {
-  const conversations = await conversationFor(
-    Conversation.find({ members: req.user.userId })
-      .select("members messages createdAt updatedAt")
-      .slice("messages", -1)
-  );
-  res.json({ conversations: conversations.map(inboxItem) });
+  const [conversations, unread] = await Promise.all([
+    conversationFor(
+      Conversation.find({ members: req.user.userId })
+        .select("members messages createdAt updatedAt")
+        .slice("messages", -1)
+    ),
+    unreadCounts(req.user.userId)
+  ]);
+  res.json({ conversations: conversations.map(conversation => ({ ...inboxItem(conversation), unreadCount: unread.get(String(conversation._id)) || 0 })) });
 }));
 
 router.post("/", auth, safe(async (req, res) => {
