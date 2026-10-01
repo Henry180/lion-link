@@ -137,6 +137,50 @@ async function fileData(file){
   if (type === 'image' || type === 'video') cropSources.set(result, uploadFile);
   return result;
 }
+
+// ---- Instant media selection ----
+// A picked photo/video appears the moment it is chosen (from a local blob URL)
+// with a spinner on top, and uploads in the background. Posting is held back
+// only while an upload is still running.
+function startMediaUpload(file, onSettled) {
+  const type = file.type.startsWith('video/') ? 'video' : file.type.startsWith('audio/') ? 'audio' : 'image';
+  const previewUrl = URL.createObjectURL(file);
+  const item = { url: previewUrl, previewUrl, type, uploading: true, failed: false };
+  (async () => {
+    try {
+      const uploadFile = await resizeImageFile(file);
+      item.url = await uploadToR2(uploadFile);
+      if (type === 'image' || type === 'video') cropSources.set(item, uploadFile);
+    } catch { item.failed = true; }
+    item.uploading = false;
+    onSettled(item);
+  })();
+  return item;
+}
+const mediaUploading = list => list.some(item => item.uploading);
+const mediaPayload = list => list.filter(item => !item.uploading && !item.failed && item.url && !String(item.url).startsWith('blob:')).map(({ url, type }) => ({ url, type }));
+const releaseMedia = item => { if (item?.previewUrl && String(item.previewUrl).startsWith('blob:')) URL.revokeObjectURL(item.previewUrl); };
+function mediaTileHTML(item, index, attrs) {
+  const src = safeUrl(item.previewUrl || item.url);
+  const visual = item.type === 'video' ? `<video src="${src}" muted playsinline preload="metadata"></video>` : `<img src="${src}" alt="Selected media">`;
+  const loader = item.uploading ? '<span class="media-uploading" role="status" aria-label="Uploading"><i></i></span>' : '';
+  const edit = item.uploading ? '' : item.type === 'image' ? `<button type="button" class="media-edit" ${attrs.crop}="${index}">Crop</button>` : item.type === 'video' ? `<button type="button" class="media-edit" ${attrs.trim}="${index}">Trim</button>` : '';
+  return `<div class="media-tile${item.uploading ? ' is-uploading' : ''}">${visual}${loader}${edit}<button type="button" class="media-remove" ${attrs.remove}="${index}" aria-label="Remove media">×</button></div>`;
+}
+function addComposerMedia(files, list, render) {
+  const room = 8 - list.length;
+  if (room <= 0) { toast('You can add up to 8 photos or videos.'); return; }
+  const usable = files.filter(file => file.size <= MAX_UPLOAD_BYTES);
+  if (usable.length < files.length) toast('One or more files were over 60 MB and were skipped.');
+  if (usable.length > room) toast('Only 8 files can be added to a post.');
+  usable.slice(0, room).forEach(file => {
+    list.push(startMediaUpload(file, item => {
+      if (item.failed) { const i = list.indexOf(item); if (i > -1) list.splice(i, 1); releaseMedia(item); toast('A file could not be uploaded. Please try again.'); }
+      render();
+    }));
+  });
+  render();
+}
 $('#media-picker').onclick=()=>$('#media-input').click();
 $('#quick-post-media-picker')?.addEventListener('click',()=>$('#quick-post-media').click());
 $('#announcement-media-picker')?.addEventListener('click',()=>$('#announcement-media').click());$('#media-input').onchange=async event=>{try{selectedMedia=await Promise.all([...event.target.files].slice(0,8).filter(file=>file.size<5*1024*1024).map(fileData));$('#media-preview').hidden=!selectedMedia.length;$('#media-preview').innerHTML=selectedMedia.map((m,i)=>`<div>${m.type==='video'?`<video src="${safeUrl(m.url)}"></video>`:`<img src="${safeUrl(m.url)}">`}<button type="button" data-remove-media="${i}">×</button></div>`).join('');if(event.target.files.length>8)toast('Only the first 8 files were selected.')}catch{toast('That media could not be read')}};
@@ -186,7 +230,7 @@ $('.message-profile').onclick=async()=>{const user=viewedProfile;if(!user)return
 $('.follow-profile').onclick=async()=>{const user=viewedProfile;if(!user)return;try{const result=await api(`/users/${encodeURIComponent(user.username)}/follow`,{method:'POST'});user.isFollowing=result.following;user.followers=result.followers;renderProfile(user);toast(result.following?'Following user':'Unfollowed user');}catch(error){toast(error.message);}};
 async function uploadStory(file){if(!file)return;try{await api('/stories',{method:'POST',body:JSON.stringify({media:await fileData(file)})});await loadStories();toast('Story posted for 24 hours.');}catch(error){toast(error.message);}}
 $('#profile-story-upload')?.addEventListener('change',e=>uploadStory(e.target.files[0]));
-document.addEventListener('click',async event=>{const d=event.target.dataset;if(d.removeMedia!==undefined){selectedMedia.splice(+d.removeMedia,1);event.target.closest('div').remove();}if(d.menu){const menu=$('#menu-'+d.menu);menu.hidden=!menu.hidden;}if(d.commentLike){const [postId,commentId]=d.commentLike.split(':');try{await api(`/posts/${postId}/comments/${commentId}/like`,{method:'POST'});await loadPosts({silent:true});const box=$('#comments-'+postId);if(box)box.hidden=false;}catch(error){toast(error.message)}}if(d.replyTo){const [postId,commentId]=d.replyTo.split(':');const form=document.querySelector(`[data-comment-form="${postId}"]`);const target=posts.find(p=>p._id===postId)?.comments?.find(c=>c._id===commentId);if(form){form.dataset.replyTo=commentId;const indicator=form.querySelector('.reply-indicator');const name=target?.author?.name||'this comment';if(indicator){indicator.hidden=false;indicator.innerHTML=`Replying to <b>${esc(name)}</b><button type="button" class="cancel-reply" aria-label="Cancel reply">×</button>`;}form.elements[0].placeholder=`Reply to ${name}…`;form.elements[0].focus();}}if(event.target.closest('.cancel-reply')){const form=event.target.closest('form');if(form){delete form.dataset.replyTo;const indicator=form.querySelector('.reply-indicator');if(indicator){indicator.hidden=true;indicator.innerHTML='';}form.elements[0].placeholder='Write a reply…';}}
+document.addEventListener('click',async event=>{const d=event.target.dataset;if(d.removeMedia!==undefined){releaseMedia(selectedMedia.splice(+d.removeMedia,1)[0]);window.renderSelectedMedia?.();}if(d.menu){const menu=$('#menu-'+d.menu);menu.hidden=!menu.hidden;}if(d.commentLike){const [postId,commentId]=d.commentLike.split(':');try{await api(`/posts/${postId}/comments/${commentId}/like`,{method:'POST'});await loadPosts({silent:true});const box=$('#comments-'+postId);if(box)box.hidden=false;}catch(error){toast(error.message)}}if(d.replyTo){const [postId,commentId]=d.replyTo.split(':');const form=document.querySelector(`[data-comment-form="${postId}"]`);const target=posts.find(p=>p._id===postId)?.comments?.find(c=>c._id===commentId);if(form){form.dataset.replyTo=commentId;const indicator=form.querySelector('.reply-indicator');const name=target?.author?.name||'this comment';if(indicator){indicator.hidden=false;indicator.innerHTML=`Replying to <b>${esc(name)}</b><button type="button" class="cancel-reply" aria-label="Cancel reply">×</button>`;}const replyInput=form.querySelector('input');if(replyInput){replyInput.placeholder=`Reply to ${name}…`;replyInput.focus();}}}if(event.target.closest('.cancel-reply')){const form=event.target.closest('form');if(form){delete form.dataset.replyTo;const indicator=form.querySelector('.reply-indicator');if(indicator){indicator.hidden=true;indicator.innerHTML='';}const replyInput=form.querySelector('input');if(replyInput)replyInput.placeholder='Write a reply…';}}
 if(d.share){const post=posts.find(p=>p._id===d.share),text=`${post.author?.name||'Lion Link user'} on Lion Link: ${post.text||''}`,shareUrl=`${location.origin}/post/${post._id}`;try{if(navigator.share)await navigator.share({title:'Lion Link',text,url:shareUrl});else{await navigator.clipboard.writeText(text+' '+shareUrl);toast('Post text and Lion Link link copied.')}}catch{}}});
 let reelVideos=[], reelIndex=0;
 // Comment author photos and names always open that member's profile.
@@ -212,16 +256,13 @@ document.addEventListener('click',event=>{if(event.target.matches('.post-media v
 function mediaPreview(items, container){const el=$(container);el.hidden=!items.length;el.innerHTML=items.map(m=>m.type==='video'?`<video controls src="${safeUrl(m.url)}"></video>`:`<img src="${safeUrl(m.url)}" alt="Selected media">`).join('');}
 function renderQuickMedia(){
   $('#quick-post-preview').hidden = !quickMedia.length;
-  $('#quick-post-preview').innerHTML = quickMedia.map((item, index) => `<div style="position:relative">${item.type === 'video' ? `<video src="${safeUrl(item.url)}"></video>` : `<img src="${safeUrl(item.url)}" alt="Selected image">`}<span style="position:absolute;left:6px;bottom:6px;display:flex;gap:6px">${item.type === 'image' ? `<button type="button" data-quick-crop="${index}">Crop</button>` : ''}${item.type === 'video' ? `<button type="button" data-quick-trim="${index}">Trim</button>` : ''}</span><button type="button" data-quick-remove="${index}" aria-label="Remove media" style="position:absolute;right:6px;top:6px">×</button></div>`).join('');
+  $('#quick-post-preview').innerHTML = quickMedia.map((item, index) => mediaTileHTML(item, index, { crop: 'data-quick-crop', trim: 'data-quick-trim', remove: 'data-quick-remove' })).join('');
+  const postButton = document.querySelector('#quick-post-form .small-post'); if (postButton) postButton.disabled = mediaUploading(quickMedia);
 }
-$('#quick-post-media').onchange=async e=>{
-  const files=[...e.target.files].slice(0,8);
-  const usable=files.filter(file=>file.size<=MAX_UPLOAD_BYTES);
-  try{
-    quickMedia=await Promise.all(usable.map(fileData));
-    renderQuickMedia();
-    if(usable.length<files.length) toast('One or more files were over 60 MB and were skipped.');
-  }catch{ toast('That media could not be read.'); }
+$('#quick-post-media').onchange=e=>{
+  const files=[...e.target.files];
+  e.target.value='';
+  addComposerMedia(files, quickMedia, renderQuickMedia);
 };
 document.addEventListener('click', event => {
   const cropBtn = event.target.closest('[data-quick-crop]');
@@ -229,7 +270,7 @@ document.addEventListener('click', event => {
   const trimBtn = event.target.closest('[data-quick-trim]');
   if (trimBtn) { event.preventDefault(); const i = Number(trimBtn.dataset.quickTrim); openTrimFor(quickMedia[i], newMedia => { quickMedia[i] = newMedia; renderQuickMedia(); }); return; }
   const removeBtn = event.target.closest('[data-quick-remove]');
-  if (removeBtn) { event.preventDefault(); quickMedia.splice(Number(removeBtn.dataset.quickRemove), 1); renderQuickMedia(); }
+  if (removeBtn) { event.preventDefault(); releaseMedia(quickMedia.splice(Number(removeBtn.dataset.quickRemove), 1)[0]); renderQuickMedia(); }
 }, true);
 $('#quick-post-form').onsubmit=async e=>{e.preventDefault();const text=$('#quick-post-text').value.trim();if(!text&&!quickMedia.length)return;try{await api('/posts',{method:'POST',body:JSON.stringify({text,media:quickMedia})});e.target.reset();quickMedia=[];renderQuickMedia();$('#quick-post-modal').hidden=true;await loadPosts();window.scrollTo({top:0,behavior:'smooth'});toast('Your post is live!');}catch(error){toast(error.message);}};
 $('#announcement-media').onchange=async e=>{announcementMedia=await Promise.all([...e.target.files].slice(0,8).map(fileData));mediaPreview(announcementMedia,'#announcement-preview');};
@@ -238,8 +279,17 @@ function personMarkup(user){const avatar=user.profileImage?`style="background-im
 async function loadPeople(){try{const {users}=await api('/users/suggestions/all');$('#people-list').innerHTML=users.map(personMarkup).join('')||'<p class="empty-profile">No other members yet.</p>';renderMobileDrawers(users);}catch(error){console.warn(error);}}
 $('#open-user-search').onclick=()=>{$('#user-search-modal').hidden=false;$('#user-search-input').focus();};
 let searchTimer;$('#user-search-input').oninput=e=>{clearTimeout(searchTimer);searchTimer=setTimeout(async()=>{const value=e.target.value.trim();if(!value){$('#user-search-results').innerHTML='<p class="empty-profile">Search registered Lion Link users.</p>';return;}try{const {users}=await api('/users/search/'+encodeURIComponent(value));$('#user-search-results').innerHTML=users.map(personMarkup).join('')||'<p class="empty-profile">No people found.</p>';}catch(error){toast(error.message);}},180);};
+// Static, developer-authored content only. An entry's second item is either a plain
+// string or a list of sections: {h: heading, p: [paragraphs], list: [bullets]}.
+function renderInfo(entry){
+  const box=$('#info-content'), body=entry[1];
+  const para=t=>`<p>${esc(t).replace(/lionlinkadmin@gmail\.com/g,'<a href="mailto:lionlinkadmin@gmail.com">lionlinkadmin@gmail.com</a>')}</p>`;
+  box.innerHTML=typeof body==='string'?para(body):body.map(sec=>`<section>${sec.h?`<h3>${esc(sec.h)}</h3>`:''}${(sec.p||[]).map(para).join('')}${sec.list?`<ul>${sec.list.map(li=>`<li>${esc(li)}</li>`).join('')}</ul>`:''}</section>`).join('');
+  const card=box.closest('.edit-card'); if(card)card.scrollTop=0;
+  const modal=$('#info-modal'); if(modal)modal.scrollTop=0;
+}
 const info={help:['Help','Need a hand? You can create posts, add stories, follow people, and send messages from their profile. Contact Lion Link support if you need account help.'],privacy:['Privacy','Your profile and posts are visible to Lion Link members. Use the profile editor to update the details you share.'],terms:['Terms','Use Lion Link respectfully. Do not post harmful, unlawful, or impersonating content.']};
-document.addEventListener('click',e=>{const key=e.target.dataset.info;if(!key)return;$('#info-title').textContent=info[key][0];$('#info-content').textContent=info[key][1];$('#info-modal').hidden=false;});
+document.addEventListener('click',e=>{const key=e.target.dataset.info;if(!key)return;$('#info-title').textContent=info[key][0];renderInfo(info[key]);$('#info-modal').hidden=false;});
 $('#copyright-year').textContent=new Date().getFullYear();
 function renderMobileDrawers(users=[]){const admin=me?.role==='admin'?'<button data-view="admin">⚙ Lion Link Admin</button>':'';const peopleIcon='<span class="ui-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><circle cx="9" cy="8" r="3"/><circle cx="17" cy="10" r="2"/><path d="M3 19c0-3 2.7-5 6-5s6 2 6 5M15 15c3 0 5 1.5 5 4"/></svg></span>';$('#mobile-left-drawer').innerHTML=`<button data-view="feed">⌂ Home</button><button data-view="announcements">📣 Announcements</button><button data-view="groups">${peopleIcon} Groups</button><button data-view="messages">✉ Messages</button><button data-view="events">◇ Events</button><button data-view="profile">♙ Profile</button>${admin}<button id="drawer-post">Create post</button><div class="drawer-account">${esc(me?.name||'')}</div>`;$('#mobile-right-drawer').innerHTML=`<h2>Upcoming events</h2><p>Student Club Fair · Sep 18</p><p>Lions Social Night · Sep 20</p><h2>People you may know</h2>${users.map(personMarkup).join('')||'<p>Loading people…</p>'}`;$('#drawer-post').onclick=()=>{$('#quick-post-modal').hidden=false;closeDrawers();};}
 function closeDrawers(){document.querySelectorAll('.mobile-drawer').forEach(x=>x.hidden=true);$('#drawer-scrim').hidden=true;}
@@ -285,11 +335,13 @@ let feedPosting = false;
 $('#submit-post').onclick = async () => {
   if (feedPosting) return;
   const text = $('#post-text').value.trim();
-  if (!text && !selectedMedia.length) return;
+  if (mediaUploading(selectedMedia)) { toast('Your media is still uploading — one moment.'); return; }
+  const media = mediaPayload(selectedMedia);
+  if (!text && !media.length) return;
   feedPosting = true;
   $('#submit-post').disabled = true;
   try {
-    const { post } = await api('/posts', { method: 'POST', body: JSON.stringify({ text, media: selectedMedia }), showLoading: true });
+    const { post } = await api('/posts', { method: 'POST', body: JSON.stringify({ text, media }), showLoading: true });
     posts.unshift(post);
     renderPosts();
     $('#post-text').value = '';
@@ -299,7 +351,7 @@ $('#submit-post').onclick = async () => {
     $('#media-preview').hidden = true;
     toast('Your post is live!');
   } catch (error) { toast(error.message); }
-  finally { feedPosting = false; $('#submit-post').disabled = false; }
+  finally { feedPosting = false; $('#submit-post').disabled = mediaUploading(selectedMedia); }
 };
 
 async function postStoryWithCaption(file) {
@@ -475,7 +527,7 @@ openChat = function(id) {
   $('#forgot-password').onclick = async () => { const email = prompt('Enter the email address used to open your Lion Link account:', $('#login-email').value.trim()); if (!email) return; try { const result = await api('/auth/forgot-password', { method: 'POST', body: JSON.stringify({ email }) }); toast(result.message); } catch (error) { toast(error.message); } };
   // The polished reset-password form is installed after the interaction layer.
   $('#help-link').onclick = () => { location.href = 'mailto:lionlinkadmin@gmail.com?subject=Lion%20Link%20help%20and%20privacy'; };
-  document.querySelectorAll('[data-info="help"],[data-info="privacy"]').forEach(button => button.onclick = () => { location.href = 'mailto:lionlinkadmin@gmail.com?subject=Lion%20Link%20help%20and%20privacy'; });
+  document.querySelectorAll('[data-info="help"]').forEach(button => button.onclick = () => { location.href = 'mailto:lionlinkadmin@gmail.com?subject=Lion%20Link%20help%20and%20privacy'; });
 
   const originalRenderEvents = renderEvents;
   renderEvents = function() { originalRenderEvents(); const rail = $('#right-event-list'); if (rail) rail.innerHTML = campusEvents.map(event => `<button class="event live-event" type="button" data-view="events"><time><b>${new Date(event.startsAt).toLocaleString(undefined,{month:'short'}).toUpperCase()}</b><strong>${new Date(event.startsAt).getDate()}</strong></time><div><strong>${esc(event.title)}</strong><p>${new Date(event.startsAt).toLocaleString()}${event.location ? ` · ${esc(event.location)}` : ''}</p></div></button>`).join('') || '<p class="empty-profile">No upcoming events.</p>'; };
@@ -710,15 +762,17 @@ $('#quick-post-form').onsubmit = async event => {
   event.preventDefault();
   if (quickPosting) return;
   const text = $('#quick-post-text').value.trim();
-  if (!text && !quickMedia.length) return;
+  if (mediaUploading(quickMedia)) { toast('Your media is still uploading — one moment.'); return; }
+  const media = mediaPayload(quickMedia);
+  if (!text && !media.length) return;
   quickPosting = true;
   const submit = event.target.querySelector('[type="submit"], .small-post'); submit.disabled = true;
   try {
-    await api('/posts', { method: 'POST', body: JSON.stringify({ text, media: quickMedia }) });
+    await api('/posts', { method: 'POST', body: JSON.stringify({ text, media }) });
     event.target.reset(); quickMedia = []; renderQuickMedia();
     $('#quick-post-modal').hidden = true; await loadPosts(); toast('Your post is live!');
   } catch (error) { toast(error.message); }
-  finally { quickPosting = false; submit.disabled = false; }
+  finally { quickPosting = false; submit.disabled = mediaUploading(quickMedia); }
 };
 document.addEventListener('submit', async event => {
   const postId = event.target.dataset.commentForm;
@@ -726,13 +780,14 @@ document.addEventListener('submit', async event => {
   event.preventDefault();
   event.stopImmediatePropagation();
   if (replying.has(postId)) return;
-  const text = event.target.elements[0].value.trim();
+  // form.elements[0] is the "Replying to ×" cancel button while replying, which is why replies were never sent.
+  const replyField = event.target.querySelector('input'); const text = (replyField?.value || '').trim();
   if (!text) return;
   replying.add(postId);
-  const submit = event.target.querySelector('button'); submit.disabled = true;
+  const submit = event.target.querySelector('button:not(.cancel-reply)'); submit.disabled = true;
   const post = posts.find(item => item._id === postId);
   const optimistic = { _id: `pending-${Date.now()}`, author: me, text, replyTo: event.target.dataset.replyTo || null, likes: [], createdAt: new Date().toISOString(), pending: true };
-  if (post) { post.comments = [...(post.comments || []), optimistic]; renderPosts(); }
+  if (post) { post.comments = [...(post.comments || []), optimistic]; renderPosts(); const openThread = $('#comments-' + postId); if (openThread) openThread.hidden = false; }
   event.target.reset(); delete event.target.dataset.replyTo; { const indicator = event.target.querySelector('.reply-indicator'); if (indicator) { indicator.hidden = true; indicator.innerHTML = ''; } }
   try {
     const { comment } = await api(`/posts/${postId}/comments`, { method: 'POST', body: JSON.stringify({ text, replyTo: optimistic.replyTo }) });
@@ -1014,18 +1069,15 @@ renderPosts = function() {
 
   const renderSelectedMedia = () => {
     $('#media-preview').hidden = !selectedMedia.length;
-    $('#media-preview').innerHTML = selectedMedia.map((item, index) => `<div style="position:relative">${item.type === 'video' ? `<video src="${safeUrl(item.url)}"></video>` : `<img src="${safeUrl(item.url)}" alt="Selected image">`}<span style="position:absolute;left:6px;bottom:6px;display:flex;gap:6px">${item.type === 'image' ? `<button type="button" data-crop-media="${index}">Crop</button>` : ''}${item.type === 'video' ? `<button type="button" data-trim-media="${index}">Trim</button>` : ''}</span><button type="button" data-remove-media="${index}" aria-label="Remove media" style="position:absolute;right:6px;top:6px">×</button></div>`).join('');
+    $('#media-preview').innerHTML = selectedMedia.map((item, index) => mediaTileHTML(item, index, { crop: 'data-crop-media', trim: 'data-trim-media', remove: 'data-remove-media' })).join('');
+    const postButton = $('#submit-post'); if (postButton) postButton.disabled = mediaUploading(selectedMedia);
   };
+  window.renderSelectedMedia = renderSelectedMedia;
 
-  $('#media-input').onchange = async event => {
-    try {
-      const files = [...event.target.files].slice(0, 8);
-      const usable = files.filter(file => file.size <= MAX_UPLOAD_BYTES);
-      selectedMedia = await Promise.all(usable.map(fileData));
-      renderSelectedMedia();
-      if (event.target.files.length > 8) toast('Only the first 8 files were selected.');
-      if (usable.length < files.length) toast('One or more files were over 60 MB and were skipped.');
-    } catch { toast('That media could not be read.'); }
+  $('#media-input').onchange = event => {
+    const files = [...event.target.files];
+    event.target.value = '';
+    addComposerMedia(files, selectedMedia, renderSelectedMedia);
   };
   document.addEventListener('click', event => {
     const cropButton = event.target.closest('[data-crop-media]');
@@ -1310,10 +1362,30 @@ renderPosts = function() {
   // whatever the person has started typing for their next message. Use this
   // for background refreshes so a draft survives the re-render.
   const rerenderKeepingDraft = () => {
-    const draft = document.getElementById('x-message-input')?.value || '';
+    const current = document.getElementById('x-message-input');
+    const draft = current?.value || '', hadFocus = document.activeElement === current;
     renderMessages();
     const box = document.getElementById('x-message-input');
     if (box && draft) box.value = draft;
+    if (box && hadFocus) box.focus();
+  };
+  // Called while a chat is open and visible: anything new in it counts as seen right away,
+  // so the open conversation never collects an unread badge.
+  const syncOpenChat = async () => {
+    const open = activeChat, summary = open && conversations.find(c => c._id === open._id);
+    if (!summary || !unreadCount(summary)) { renderInbox(); return; }
+    summary.unreadCount = 0;
+    if (summary.lastMessage && !mine(summary.lastMessage)) summary.lastMessage.readAt = summary.lastMessage.readAt || new Date().toISOString();
+    renderInbox();
+    try {
+      api(`/conversations/${open._id}/read`, { method: 'POST' }).then(() => loadNotifications?.()).catch(() => {});
+      const { conversation } = await api(`/conversations/${open._id}?limit=50`);
+      if (activeChat?._id !== open._id) return;
+      (conversation.messages || []).forEach(message => { if (!mine(message)) message.readAt = message.readAt || new Date().toISOString(); });
+      activeChat = conversation;
+      conversationCache.set(open._id, conversation.messages || []);
+      rerenderKeepingDraft();
+    } catch {}
   };
   const avatar = user => { const image=user?.profileImage?` style="background-image:url('${safeUrl(user.profileImage)}');background-size:cover"`:''; return `<button class="avatar avatar-gold x-profile-link" type="button" data-profile="${esc(user?.username||'')}"${image}>${user?.profileImage?'':initials(user?.name)}</button>`; };
   const renderAttachPreview = () => {
@@ -1331,7 +1403,7 @@ renderPosts = function() {
   // Inbox responses carry only a small last-message preview. Full message
   // history, including attachment URLs, is loaded only for an open chat.
   const inboxLast = conversation => conversation.lastMessage || conversation.messages?.at(-1);
-  const unreadCount = c => c.unreadCount ?? ((inboxLast(c) && !mine(inboxLast(c)) && !inboxLast(c).readAt) ? 1 : 0);
+  const unreadCount = c => Number(c.unreadCount ?? ((inboxLast(c) && !mine(inboxLast(c)) && !inboxLast(c).readAt) ? 1 : 0)) || 0;
   const persist = () => localStorage.setItem('lionLinkViewState', JSON.stringify({ view: document.querySelector('.view.active')?.id?.replace(/-view$/, '') || 'feed', chat: activeChat?._id || null }));
   const updateBadge = () => {
     const total=conversations.reduce((sum,c)=>sum+unreadCount(c),0);
@@ -1342,18 +1414,18 @@ renderPosts = function() {
     document.querySelectorAll('#message-count, .bottom-nav-message-count').forEach(badge => { badge.hidden=!total; badge.textContent=label; });
   };
   const requestNotifications = () => { if ('Notification' in window && Notification.permission==='default') Notification.requestPermission(); };
-  const renderInbox = () => { const target=$('#x-conversation-list'); if(!target)return; target.innerHTML=(!inboxLoaded&&!conversations.length)?skeletonPeople(4):conversations.map(c=>{const other=otherMember(c),last=inboxLast(c),unread=unreadCount(c);return `<div class="x-conversation ${activeChat?._id===c._id?'selected':''} ${unread?'unread':''}" role="button" tabindex="0" data-x-chat="${c._id}">${avatar(other)}<span><b>${esc(other.name)}${verifiedBadge(other)}</b><small>@${esc(other.username)}</small><p>${esc(preview(last))}</p></span><span class="x-conversation-meta"><time>${last?.createdAt?when(last.createdAt):''}</time>${unread?`<i>${unread>99?'99+':unread}</i>`:''}</span></div>`;}).join('')||'<p class="x-empty">No messages yet. Search for a Lion Link member to start one.</p>'; updateBadge(); };
+  const renderInbox = () => { const target=$('#x-conversation-list'); if(!target)return; target.innerHTML=(!inboxLoaded&&!conversations.length)?skeletonPeople(4):conversations.map(c=>{const other=otherMember(c),last=inboxLast(c),unread=unreadCount(c);return `<div class="x-conversation ${activeChat?._id===c._id?'selected':''} ${unread?'unread':''}" role="button" tabindex="0" data-x-chat="${c._id}">${avatar(other)}<span><b>${esc(other.name)}${verifiedBadge(other)}</b><small>@${esc(other.username)}</small><p>${esc(preview(last))}</p></span><span class="x-conversation-meta"><time>${last?.createdAt?when(last.createdAt):''}</time>${unread?`<i>${unread>5?'5+':unread}</i>`:''}</span></div>`;}).join('')||'<p class="x-empty">No messages yet. Search for a Lion Link member to start one.</p>'; updateBadge(); };
   const renderWelcome = () => { $('#x-chat-panel').innerHTML='<section class="x-welcome"><span>✉</span><h2>Your messages</h2><p>Select a conversation or start a new private message.</p><button type="button" class="small-post" data-new-dm>Write a message</button></section>'; renderInbox(); };
   const renderChat = () => { if(!activeChat)return renderWelcome(); const other=otherMember(activeChat); const rows=activeChat.loadingMessages?skeletonMessages():(activeChat.messages||[]).map(message=>{const own=mine(message),media=message.media?.url?`<div class="x-message-media">${message.media.type==='video'?`<video controls src="${safeUrl(message.media.url)}"></video>`:message.media.type==='audio'?`<audio controls src="${safeUrl(message.media.url)}"></audio>`:`<img src="${safeUrl(message.media.url)}" alt="Message attachment">`}</div>`:'';const status=own?`<small class="x-status">${message.pending?'Sending':message.readAt?'Read':message.deliveredAt?'Delivered':'Sent'}</small>`:'';return `<article class="x-message ${own?'mine':''}">${own?'':avatar(other)}<div><div class="x-bubble">${media}${message.text?`<p>${esc(message.text)}</p>`:''}</div><time>${when(message.createdAt)} ${status}</time></div></article>`;}).join('')||'<p class="x-empty">Say hello to start the conversation.</p>';
     const presence = other.lastActiveAt && Date.now() - new Date(other.lastActiveAt).getTime() < 2 * 60 * 1000 ? 'Active now' : other.lastActiveAt ? `Last active ${when(other.lastActiveAt)} ago` : '';
     $('#x-chat-panel').innerHTML=`<header class="x-chat-header"><button type="button" data-x-back aria-label="Back to inbox">‹</button>${avatar(other)}<button class="x-chat-person" type="button" data-profile="${esc(other.username)}"><b>${esc(other.name)}${verifiedBadge(other)}</b><small>@${esc(other.username)}${presence ? ` · ${presence}` : ''}</small></button></header><section class="x-message-stream" id="x-message-stream">${rows}</section><form id="x-compose" class="x-compose"><button class="x-emoji" type="button" title="Add emoji" data-emoji>☺</button><label title="Attach photo or video"><span class="ui-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M21.44 11.05l-9.19 9.19a5.5 5.5 0 0 1-7.78-7.78l9.2-9.19a3.5 3.5 0 0 1 4.95 4.95l-9.2 9.19a1.5 1.5 0 0 1-2.12-2.12l8.49-8.48"/></svg></span><input id="x-media-input" type="file" accept="image/*,video/*" hidden></label><textarea id="x-message-input" maxlength="300" rows="1" placeholder="Start a new message"></textarea><button class="small-post" type="submit">Send</button></form><div id="x-attach-preview" class="chat-media-preview"></div>`;
     const stream=$('#x-message-stream');stream.scrollTop=stream.scrollHeight; $('#x-media-input').onchange=async e=>{const file=e.target.files[0];if(!file)return;if(file.size>MAX_UPLOAD_BYTES)return toast('That file is over 60 MB — please choose a smaller one.');try{attachedMedia=await fileData(file);renderAttachPreview();}catch{toast('That attachment could not be read.');}};
   };
-  const renderMessages = () => { messagesView.innerHTML='<header class="page-header x-messages-header"><div><p class="eyebrow">PRIVATE CONVERSATIONS</p><h1>Messages</h1></div><button class="small-post" id="x-new-message" type="button">New message</button></header><div class="x-messages-shell"><aside class="x-inbox"><label class="x-search">⌕<input id="x-inbox-search" type="search" placeholder="Search messages or people"></label><div id="x-conversation-list"></div></aside><section class="x-chat" id="x-chat-panel"></section></div>';$('.x-messages-shell').classList.toggle('x-chat-open',!!activeChat);activeChat?renderChat():renderWelcome();$('#x-new-message').onclick=openNew;$('#x-inbox-search').oninput=e=>search(e.target.value); };
+  const renderMessages = () => { messagesView.innerHTML='<header class="page-header x-messages-header"><div><p class="eyebrow">PRIVATE CONVERSATIONS</p><h1>Messages</h1></div><button class="small-post" id="x-new-message" type="button">New message</button></header><div class="x-messages-shell"><aside class="x-inbox"><label class="x-search">⌕<input id="x-inbox-search" type="search" placeholder="Search messages or people"></label><div id="x-conversation-list"></div></aside><section class="x-chat" id="x-chat-panel"></section></div>';$('.x-messages-shell').classList.toggle('x-chat-open',!!activeChat);activeChat?(renderChat(),renderInbox()):renderWelcome();$('#x-new-message').onclick=openNew;$('#x-inbox-search').oninput=e=>search(e.target.value); };
   const openNew = () => { requestNotifications(); $('#user-search-modal').hidden=false; $('#user-search-input').value=''; $('#user-search-results').innerHTML='<p class="empty-profile">Search registered Lion Link users.</p>'; $('#user-search-input').focus(); };
   const search = async value => { const query=value.trim().toLowerCase(); if(!query){renderInbox();return;} const local=conversations.filter(c=>`${otherMember(c).name} ${otherMember(c).username}`.toLowerCase().includes(query)); $('#x-conversation-list').innerHTML=local.map(c=>`<div class="x-conversation" role="button" tabindex="0" data-x-chat="${c._id}">${avatar(otherMember(c))}<span><b>${esc(otherMember(c).name)}</b><small>@${esc(otherMember(c).username)}</small><p>${esc(preview(inboxLast(c)))}</p></span></div>`).join(''); try{const {users}=await api('/users/search/'+encodeURIComponent(query));const unseen=users.filter(u=>!conversations.some(c=>otherMember(c).username===u.username));if(unseen.length)$('#x-conversation-list').insertAdjacentHTML('beforeend',`<p class="x-search-heading">People</p>${unseen.map(u=>`<div class="x-conversation" role="button" tabindex="0" data-start-dm="${esc(u.username)}">${avatar(u)}<span><b>${esc(u.name)}</b><small>@${esc(u.username)}</small><p>Start a conversation</p></span></div>`).join('')}`);}catch{} };
-  loadChats = async function(){let result;try{result=await api('/conversations');}finally{inboxLoaded=true;}const before=new Set(knownIncoming), previous=activeChat;conversations=(result.conversations||[]).sort((a,b)=>new Date(b.updatedAt)-new Date(a.updatedAt));conversations.forEach(c=>{const message=inboxLast(c);if(message&&!mine(message)&&!message.readAt){const key=`${c._id}:${message._id}`;if(knownIncoming.size&&!before.has(key)&&Notification.permission==='granted')new Notification(otherMember(c).name,{body:preview(message),tag:key});knownIncoming.add(key);}});if(previous){const summary=conversations.find(c=>c._id===previous._id);activeChat=summary?{...summary,messages:previous.messages||[]}:null;}renderMessages();};
-  openChat = async id => { const summary=conversations.find(c=>c._id===id);if(!summary)return;const cached=conversationCache.get(id)||(summary.isNew?[]:undefined);const hadMessages=!!cached||(activeChat?._id===id&&(activeChat.messages||[]).length>0);activeChat={...summary,messages:cached||(activeChat?._id===id?activeChat.messages||[]:[]),loadingMessages:!hadMessages};show('messages');persist();renderMessages();try{const {conversation}=await api(`/conversations/${id}?limit=50`);if(activeChat?._id!==id)return;activeChat=conversation;conversationCache.set(id,conversation.messages||[]);renderMessages();if(unreadCount(summary)){await api(`/conversations/${id}/read`,{method:'POST'});activeChat.messages.forEach(message=>{if(!mine(message))message.readAt=new Date().toISOString();});await loadChats();}}catch(error){if(activeChat?._id===id){activeChat.loadingMessages=false;renderMessages();}toast(error.message);}};
+  loadChats = async function(){let result;try{result=await api('/conversations');}finally{inboxLoaded=true;}const before=new Set(knownIncoming), previous=activeChat;conversations=(result.conversations||[]).sort((a,b)=>new Date(b.updatedAt)-new Date(a.updatedAt));conversations.forEach(c=>{const message=inboxLast(c);if(message&&!mine(message)&&!message.readAt){const key=`${c._id}:${message._id}`;if(knownIncoming.size&&!before.has(key)&&Notification.permission==='granted')new Notification(otherMember(c).name,{body:preview(message),tag:key});knownIncoming.add(key);}});if(previous){const summary=conversations.find(c=>c._id===previous._id);activeChat=summary?{...summary,messages:previous.messages||[]}:null;}if(!activeChat){renderMessages();return;}/* A chat is open: refresh only the inbox so the compose box, draft and keyboard are left alone. */if(document.querySelector('#messages-view.active')&&document.visibilityState==='visible')syncOpenChat();else renderInbox();};
+  openChat = async id => { const summary=conversations.find(c=>c._id===id);if(!summary)return;/* Clear this chat's unread count (and the nav badge) the instant it opens, not after a network round trip. */const hadUnread=unreadCount(summary)>0;if(hadUnread){summary.unreadCount=0;if(summary.lastMessage&&!mine(summary.lastMessage))summary.lastMessage.readAt=summary.lastMessage.readAt||new Date().toISOString();}const cached=conversationCache.get(id)||(summary.isNew?[]:undefined);const hadMessages=!!cached||(activeChat?._id===id&&(activeChat.messages||[]).length>0);activeChat={...summary,messages:cached||(activeChat?._id===id?activeChat.messages||[]:[]),loadingMessages:!hadMessages};show('messages');persist();renderMessages();try{const {conversation}=await api(`/conversations/${id}?limit=50`);if(activeChat?._id!==id)return;activeChat=conversation;conversationCache.set(id,conversation.messages||[]);renderMessages();if(hadUnread){activeChat.messages.forEach(message=>{if(!mine(message))message.readAt=message.readAt||new Date().toISOString();});api(`/conversations/${id}/read`,{method:'POST'}).then(()=>loadNotifications?.()).catch(()=>{});}}catch(error){if(activeChat?._id===id){activeChat.loadingMessages=false;renderMessages();}toast(error.message);}};
   const startDM = async username => {try{const {conversation}=await api('/conversations',{method:'POST',body:JSON.stringify({username}),showLoading:true});await loadChats();$('#user-search-modal').hidden=true;await openChat(conversation._id);}catch(error){toast(error.message);}};
   document.addEventListener('click',e=>{const chat=e.target.closest('[data-x-chat]');if(chat&&!e.target.closest('[data-profile]')){e.preventDefault();openChat(chat.dataset.xChat);}if(e.target.closest('[data-x-back]')){activeChat=null;persist();renderMessages();}if(e.target.closest('[data-new-dm]'))openNew();const start=e.target.closest('[data-start-dm]');if(start)startDM(start.dataset.startDm);if(e.target.closest('[data-emoji]')){$('#x-message-input').value+='😊';$('#x-message-input').focus();}if(e.target.id==='x-remove-attach'){attachedMedia=null;renderAttachPreview();const input=document.getElementById('x-media-input');if(input)input.value='';}
 if(e.target.id==='x-edit-attach'&&attachedMedia){
@@ -1365,9 +1437,9 @@ if(e.target.id==='x-edit-attach'&&attachedMedia){
   document.addEventListener('keydown',event=>{if(event.target.id==='x-message-input'&&event.key==='Enter'&&!event.shiftKey){event.preventDefault();event.target.closest('form')?.requestSubmit();}});
   document.addEventListener('keydown',event=>{const row=event.target.closest('[data-x-chat],[data-start-dm]');if(row&&(event.key==='Enter'||event.key===' ')){event.preventDefault();row.dataset.xChat?openChat(row.dataset.xChat):startDM(row.dataset.startDm);}});
   const originalSearch=$('#user-search-input').oninput; $('#user-search-input').oninput=e=>{originalSearch?.(e);}; document.addEventListener('click',e=>{const person=e.target.closest('#user-search-results .person');const username=person?.querySelector('[data-profile]')?.dataset.profile||person?.querySelector('[data-avatar]')?.dataset.avatar;if(username){e.preventDefault();e.stopPropagation();startDM(username);}},true);
-  const baseShow=show;show=function(view){baseShow(view);persist();};
+  const baseShow=show;show=function(view){baseShow(view);persist();if(view==='messages'&&activeChat)syncOpenChat();};
   const restore=()=>{if(restored||!me)return;restored=true;try{const state=JSON.parse(localStorage.getItem('lionLinkViewState')||'{}');if(state.view){show(state.view);if(state.view==='messages'&&state.chat)openChat(state.chat);}}catch{}};const baseIdentity=identity;identity=function(){baseIdentity();restore();};
-  renderMessages(); if(token) loadChats().catch(()=>{}); setInterval(()=>{if(token&&document.visibilityState==='visible')loadChats().catch(()=>{});},60000);
+  renderMessages(); if(token) loadChats().catch(()=>{}); setInterval(()=>{if(token&&document.visibilityState==='visible')loadChats().catch(()=>{});},15000);
 
   // (The feed now shows skeleton placeholders while it loads instead of a
   // full-screen spinner, so no wrapper is needed here.)
@@ -1437,7 +1509,8 @@ if(e.target.id==='x-edit-attach'&&attachedMedia){
     if (!Array.isArray(conversations) || !me) return;
     const total = conversations.reduce((count, conversation) => {
       const last = conversation.lastMessage || conversation.messages?.at(-1);
-      return count + (last && String(last.sender?._id || last.sender) !== String(me.id) && !last.readAt ? 1 : 0);
+      // Total unread messages (server-supplied per conversation), so opening a chat counts the badge down.
+      return count + (Number(conversation.unreadCount ?? (last && String(last.sender?._id || last.sender) !== String(me.id) && !last.readAt ? 1 : 0)) || 0);
     }, 0);
     const label = total > 99 ? '99+' : total;
     document.querySelectorAll('#message-count, .bottom-nav-message-count').forEach(badge => { badge.hidden = !total; badge.textContent = label; });
@@ -1766,9 +1839,52 @@ $('.message-profile').onclick = async () => {
 // Privacy/Terms buttons (see `const info = {...}` and the document click
 // listener that reads info[key]) rather than inventing separate pages.
 {
-  info.privacy = ['Privacy', "Lion Link is built mainly for University of Nigeria, Nsukka (UNN) students, and other students and individuals are welcome to join too. Signing up stores your name, username, email, and password, and your password is encrypted so nobody, including Lion Link Admin, can see it. What you post, comment, and message is stored so the app can show it to you and other members. Posts and profiles are visible to signed-in Lion Link members, and direct messages are visible only to the people in that conversation. Photos and videos you upload are stored with our media host, Cloudflare R2, and linked from your posts, stories, and messages. Lion Link Admin can view reported posts in order to moderate them. We do not sell your data or share it outside Lion Link. You can edit or remove your profile details, posts, and photos at any time from your profile and post menus. For questions or data requests, contact lionlinkadmin@gmail.com."];
-  info.terms = ['Terms & Conditions', "By using Lion Link you agree to help keep it a safe space for the community: no harassment, hate speech, impersonation, or unlawful content, and no sharing someone else's private information without their consent. Content you post is yours, and you're responsible for it. Lion Link Admin may remove posts or suspend accounts that break these rules or get reported. Please don't use Lion Link to spam, scrape, or try to access accounts that aren't yours. Lion Link is provided as is, without guarantees of uninterrupted access. Continuing to use the app after these terms change means you accept the update. Contact lionlinkadmin@gmail.com with any concerns."];
-  info.about = ['About Lion Link', "Lion Link is a campus social platform built mainly for University of Nigeria, Nsukka (UNN) students, though other students and individuals are welcome to use it too. It's a place to share what's happening around campus in one home feed, post 24 hour stories, follow and message other members, join or start groups, keep up with events, and get official updates through admin verified announcements."];
+  info.privacy = ['Privacy Policy', [
+    { p: ['Lion Link is a campus social platform built mainly for University of Nigeria, Nsukka (UNN) students. Other students and individuals are welcome to join too. This policy explains what we collect, how it is used, and the choices you have.'] },
+    { h: '1. Information we collect', p: [
+      'When you create an account we store your display name, username, email address and password. Your password is encrypted, so nobody, including Lion Link Admin, can read it.',
+      'We also store what you add to the app: your profile details, posts, comments, stories, group activity and direct messages, along with the photos and videos you upload.',
+      'To show whether someone is online, Lion Link records when you were last active in the app.' ] },
+    { h: '2. How we use your information', list: [
+      'To run your account and keep you signed in.',
+      'To show your content to you and to other members.',
+      'To deliver messages and notifications about likes, comments, follows and new messages.',
+      'To review reported content and keep the community safe.' ] },
+    { h: '3. Who can see it', p: [
+      'Your profile and posts are visible to signed-in Lion Link members. Direct messages are visible only to the people in that conversation. Your activity status ("Active now" or "Last active") is visible to other members.',
+      'When a profile or post link is shared, its basic details (name, username, bio, photo or a post preview) may appear in the link preview.',
+      'Lion Link Admin can view reported posts in order to moderate them.' ] },
+    { h: '4. Photos and videos', p: ['Media you upload is stored with our media host, Cloudflare R2, and linked from your posts, stories and messages.'] },
+    { h: '5. Sharing of data', p: ['We do not sell your data. We do not share it outside Lion Link, other than with the service providers needed to run the app, such as our media storage host.'] },
+    { h: '6. Your choices', p: ['You can edit your profile details at any time, and remove your posts, comments and photos from your profile and post menus.'] },
+    { h: '7. Contact us', p: ['For questions or data requests, contact lionlinkadmin@gmail.com.'] }
+  ]];
+  info.terms = ['Terms & Conditions', [
+    { p: ['By creating an account or using Lion Link you agree to these terms. They exist to keep Lion Link a safe and welcoming space for the whole community.'] },
+    { h: '1. Your account', p: ['You are responsible for the information you give when you sign up and for keeping your password secure. Please do not use, or try to access, an account that is not yours.'] },
+    { h: '2. Community standards', p: ['Help keep Lion Link respectful. You must not:'], list: [
+      'Harass, threaten or bully other members.',
+      'Post hate speech or unlawful content.',
+      'Impersonate another person or organisation.',
+      "Share someone else's private information without their consent.",
+      'Spam, scrape or misuse the service.' ] },
+    { h: '3. Your content', p: ['Content you post is yours, and you are responsible for it. Only post what you have the right to share.'] },
+    { h: '4. Moderation', p: ['Lion Link Admin may remove posts or suspend accounts that break these rules or that are reported by other members.'] },
+    { h: '5. Availability', p: ['Lion Link is provided "as is", without any guarantee of uninterrupted access.'] },
+    { h: '6. Changes to these terms', p: ['If these terms change, continuing to use Lion Link after the update means you accept the new version.'] },
+    { h: '7. Contact us', p: ['If you have any concerns, contact lionlinkadmin@gmail.com.'] }
+  ]];
+  info.about = ['About Lion Link', [
+    { p: ['Lion Link is a campus social platform built mainly for University of Nigeria, Nsukka (UNN) students. Other students and individuals are welcome to use it too.'] },
+    { h: 'What you can do', list: [
+      "Share what's happening around campus in one home feed.",
+      'Post stories that last 24 hours.',
+      'Follow and message other members.',
+      'Join or start groups.',
+      'Keep up with campus events.',
+      'Get official updates through admin-verified announcements.' ] },
+    { h: 'Get in touch', p: ['Questions or feedback? Reach us at lionlinkadmin@gmail.com.'] }
+  ]];
 
   const renderMobileDrawersBase = renderMobileDrawers;
   renderMobileDrawers = function(users) {
@@ -1842,5 +1958,121 @@ $('.message-profile').onclick = async () => {
     $('#avatar-choice-profile').onclick = () => { choiceModal.hidden = true; openProfile(username); };
     $('#avatar-choice-photo').hidden = false;
     choiceModal.hidden = false;
+  }, true);
+})();
+
+// =====================================================================
+// Home button: jump to the top, pull in newer posts, refresh the badges.
+// Applies to the bottom nav, the sidebar, the drawer and the logo.
+// =====================================================================
+(() => {
+  let refreshing = false;
+  const scrollToTop = () => {
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+    document.querySelector('.main-content')?.scrollTo?.({ top: 0, behavior: 'smooth' });
+  };
+  const refreshHome = async () => {
+    if (refreshing || !token) return;
+    refreshing = true;
+    const button = $('#refresh-feed'), label = button?.textContent;
+    if (button) button.textContent = '↻ Refreshing…';
+    try { await Promise.allSettled([loadPosts({ silent: true }), loadNotifications?.(), loadChats?.()]); }
+    finally { refreshing = false; if (button) button.textContent = label || '↻ Refresh'; }
+  };
+  // Capture phase: runs before the navigation handlers, then scrolls once the feed is on screen.
+  document.addEventListener('click', event => {
+    const home = event.target.closest?.('[data-view="feed"], .brand');
+    if (!home) return;
+    if (home.matches('.brand')) { event.preventDefault(); show('feed'); }
+    requestAnimationFrame(scrollToTop);
+    refreshHome();
+  }, true);
+})();
+
+// =====================================================================
+// Faster profiles: open instantly from what is already known (cached
+// profile, a post/comment author, or a search/suggestion result), fetch
+// the full profile in the background, and never re-render the whole feed
+// just to show one person's posts. Tapping/pressing an avatar or name
+// starts the fetch before the click even completes.
+// =====================================================================
+(() => {
+  const cache = new Map(), cachedAt = new Map(), inflight = new Map(), known = new Map();
+  const FRESH_MS = 5000;
+
+  const apiBeforeProfiles = api;
+  api = async function (path, options) {
+    const result = await apiBeforeProfiles(path, options);
+    try { if (Array.isArray(result?.users)) result.users.forEach(user => { if (user?.username) known.set(user.username, { ...(known.get(user.username) || {}), ...user }); }); } catch {}
+    return result;
+  };
+
+  const fetchProfile = username => {
+    if (inflight.has(username)) return inflight.get(username);
+    const request = api('/users/' + encodeURIComponent(username))
+      .then(({ user }) => { cache.set(username, user); cachedAt.set(username, Date.now()); return user; })
+      .finally(() => inflight.delete(username));
+    inflight.set(username, request);
+    return request;
+  };
+
+  const seedFor = username => {
+    if (cache.has(username)) return cache.get(username);
+    if (known.has(username)) return known.get(username);
+    for (const post of posts) {
+      if (post.author?.username === username) return post.author;
+      for (const comment of post.comments || []) if (comment.author?.username === username) return comment.author;
+    }
+    return null;
+  };
+
+  // Only the profile's own post list is rebuilt; the full feed is left alone.
+  const renderProfilePostsOnly = () => {
+    const username = (viewedProfile || me)?.username;
+    $('#profile-posts').innerHTML = posts.filter(post => post.author?.username === username).map(postMarkup).join('') || '<p class="empty-profile">No posts yet.</p>';
+  };
+  const renderLight = user => {
+    const fullRender = renderPosts;
+    renderPosts = renderProfilePostsOnly;
+    try { renderProfile(user); } finally { renderPosts = fullRender; }
+    // Don't show numbers or a Follow state we don't actually know yet.
+    if (user.followers === undefined && user.following === undefined) document.querySelectorAll('.profile-stats b').forEach(node => { node.textContent = '–'; });
+    if (user.isFollowing === undefined && user.username !== me?.username) { const follow = $('.follow-profile'); if (follow) follow.hidden = true; }
+  };
+
+  openProfile = async function (username) {
+    if (!username || !me) return;
+    if (username === me.username) { renderLight(me); show('profile'); window.scrollTo(0, 0); return; }
+
+    const fresh = cache.has(username) && Date.now() - (cachedAt.get(username) || 0) < FRESH_MS;
+    const request = fresh ? Promise.resolve(cache.get(username)) : fetchProfile(username);
+    const seed = seedFor(username);
+
+    renderLight(seed || { name: username, username });
+    show('profile');
+    window.scrollTo(0, 0);
+
+    try {
+      const user = await request;
+      // Only repaint if they are still looking at this person.
+      if (viewedProfile?.username === username && document.querySelector('#profile-view.active')) renderLight(user);
+    } catch (error) {
+      toast(error.message);
+      if (!seed && viewedProfile?.username === username) show('feed');
+    }
+  };
+
+  // Start loading the moment a finger/pointer goes down on a name or avatar.
+  document.addEventListener('pointerdown', event => {
+    const target = event.target.closest?.('[data-profile],[data-avatar],[data-profile-avatar]');
+    const username = target?.dataset.profile || target?.dataset.avatar || target?.dataset.profileAvatar;
+    if (username && username !== me?.username && !(cache.has(username) && Date.now() - (cachedAt.get(username) || 0) < FRESH_MS)) fetchProfile(username).catch(() => {});
+  }, true);
+
+  // A follow/unfollow makes the cached copy out of date.
+  document.addEventListener('click', event => {
+    const follow = event.target.closest?.('[data-follow]');
+    if (follow) { cache.delete(follow.dataset.follow); cachedAt.delete(follow.dataset.follow); }
+    if (event.target.closest?.('.follow-profile') && viewedProfile?.username) { cache.delete(viewedProfile.username); cachedAt.delete(viewedProfile.username); }
   }, true);
 })();
