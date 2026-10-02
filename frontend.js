@@ -61,6 +61,12 @@ function verifiedBadge(user){return user?.role==='admin'?'<span class="verified"
 // also be used to append comments loaded later (see the progressive
 // comment-loading block near the end of this file). Deliberately mirrors
 // the markup postMarkup already produces for a post's initial comments.
+// "↳ Replying to Name" line shown on a posted reply.
+function replyLabelHTML(comment, siblings) {
+  if (!comment?.replyTo) return '';
+  const parent = (siblings || []).find(item => String(item._id) === String(comment.replyTo));
+  return `<small class="comment-replying">↳ Replying to <b>${esc(parent?.author?.name || 'a comment')}</b></small>`;
+}
 function renderCommentHTML(postId, c) {
   const author = c.author || {}, username = author.username || '';
   const commentAvatar = author.profileImage ? `style="background-image:url('${safeUrl(author.profileImage)}');background-size:cover"` : '';
@@ -68,14 +74,14 @@ function renderCommentHTML(postId, c) {
   const liked = commentLikes.some(id => (id._id || id).toString() === me?.id);
   const isMine = (author._id || author.id || author)?.toString() === me?.id?.toString();
   const editable = isMine && c.createdAt && Date.now() - new Date(c.createdAt).getTime() <= 15 * 60 * 1000;
-  return `<div class="comment" id="comment-${c._id}" data-comment-id="${c._id}"><button class="avatar avatar-gold comment-avatar" type="button" data-profile="${esc(username)}" aria-label="Open ${esc(author.name || 'user')} profile" ${commentAvatar}>${author.profileImage ? '' : initials(author.name)}</button><div class="comment-body"><div class="comment-line"><p><button class="comment-author" type="button" data-profile="${esc(username)}">${esc(author.name || 'User')}${verifiedBadge(author)}</button> ${esc(c.text)}</p>${isMine ? `<button class="comment-more" data-comment-menu="${postId}:${c._id}" aria-label="Comment options">•••</button><div class="comment-menu" id="comment-menu-${postId}-${c._id}" hidden>${editable ? `<button data-edit-comment="${postId}:${c._id}">Edit</button>` : ''}<button data-delete-comment="${postId}:${c._id}">Delete</button></div>` : ''}</div><button class="${liked ? 'liked' : ''}" data-comment-like="${postId}:${c._id}">♥ ${commentLikes.length}</button><button data-reply-to="${postId}:${c._id}">Reply</button></div></div>`;
+  return `<div class="comment" id="comment-${c._id}" data-comment-id="${c._id}"><button class="avatar avatar-gold comment-avatar" type="button" data-profile="${esc(username)}" aria-label="Open ${esc(author.name || 'user')} profile" ${commentAvatar}>${author.profileImage ? '' : initials(author.name)}</button><div class="comment-body">${replyLabelHTML(c, posts.find(post => post._id === postId)?.comments)}<div class="comment-line"><p><button class="comment-author" type="button" data-profile="${esc(username)}">${esc(author.name || 'User')}${verifiedBadge(author)}</button> ${esc(c.text)}</p>${isMine ? `<button class="comment-more" data-comment-menu="${postId}:${c._id}" aria-label="Comment options">•••</button><div class="comment-menu" id="comment-menu-${postId}-${c._id}" hidden>${editable ? `<button data-edit-comment="${postId}:${c._id}">Edit</button>` : ''}<button data-delete-comment="${postId}:${c._id}">Delete</button></div>` : ''}</div><button class="${liked ? 'liked' : ''}" data-comment-like="${postId}:${c._id}">♥ ${commentLikes.length}</button><button data-reply-to="${postId}:${c._id}">Reply</button></div></div>`;
 }
 function postMarkup(post){const mine=post.author?._id===me?.id||post.author?.id===me?.id;const user=post.author?.username||'';const hasStory=stories.some(s=>s.author?.username===user);const likes=Array.isArray(post.likes)?post.likes:[];const comments=Array.isArray(post.comments)?post.comments:[];const media=post.media||[];const avatar=post.author?.profileImage?`style="background-image:url('${safeUrl(post.author.profileImage)}');background-size:cover"`:'';const tiles=media.slice(0,4).map((m,i)=>`<button class="gallery-item" type="button" data-open-media="${post._id}:${i}" aria-label="Open post media ${i+1}">${m.type==='video'?`<video muted preload="metadata" src="${safeUrl(m.url)}"></video>`:`<img src="${safeUrl(m.url)}" alt="Post media ${i+1}">`}${i===3&&media.length>4?`<span class="media-more">+${media.length-4}</span>`:''}</button>`).join('');const commentMarkup=c=>{const commentLikes=Array.isArray(c.likes)?c.likes:[];const liked=commentLikes.some(id=>(id._id||id).toString()===me?.id);const isMine=(c.author?._id||c.author?.id||c.author)?.toString()===me?.id?.toString();const editable=isMine&&c.createdAt&&Date.now()-new Date(c.createdAt).getTime()<=15*60*1000;return `<div class="comment"><div class="comment-line"><p><b>${esc(c.author?.name||'User')}</b> ${esc(c.text)}</p>${isMine?`<button class="comment-more" data-comment-menu="${post._id}:${c._id}" aria-label="Comment options">•••</button><div class="comment-menu" id="comment-menu-${post._id}-${c._id}" hidden>${editable?`<button data-edit-comment="${post._id}:${c._id}">Edit</button>`:''}<button data-delete-comment="${post._id}:${c._id}">Delete</button></div>`:''}</div><button class="${liked?'liked':''}" data-comment-like="${post._id}:${c._id}">♥ ${commentLikes.length}</button><button data-reply-to="${post._id}:${c._id}">Reply</button></div>`};return `<article class="post" id="post-${post._id}"><button class="avatar avatar-gold ${hasStory?'has-story':''}" data-avatar="${esc(user)}" ${avatar}>${post.author?.profileImage?'':initials(post.author?.name)}</button><div class="post-content"><div class="post-meta"><strong class="profile-name" data-profile="${esc(user)}">${esc(post.author?.name||'Lion Link User')}</strong><span>@${esc(user)} · ${when(post.createdAt)}</span>${mine?`<button class="action" data-menu="${post._id}">•••</button>`:` <button class="follow-small" data-follow="${esc(user)}">Follow</button>`}</div>${post.text?`<p class="post-text">${esc(post.text)}</p>`:''}${media.length?`<div class="post-media gallery gallery-${Math.min(media.length,4)}">${tiles}</div>`:''}<div class="post-actions"><button class="action" data-report-post="${mine?'':post._id}" ${mine?'hidden':''}>⚑ Report</button><button class="action" data-comment-toggle="${post._id}" aria-expanded="false">💬 ${commentCountLabel(post.commentsCount ?? comments.length)}</button><button class="action ${likes.some(id=>(id._id||id).toString()===me?.id)?'liked':''}" data-like="${post._id}">♥ ${likes.length}</button><button class="action" data-share="${post._id}">↗ Share</button></div><div class="post-menu" id="menu-${post._id}" hidden><button data-edit-post="${post._id}">Edit</button><button data-delete-post="${post._id}">Delete</button></div><div class="comment-thread" id="comments-${post._id}" hidden>${comments.map(commentMarkup).join('')}<form data-comment-form="${post._id}"><div class="reply-indicator" hidden></div><input maxlength="280" required placeholder="Write a reply…"><button>Reply</button></form></div></div></article>`;}
 postMarkup = function(post){
   const mine=post.author?._id===me?.id||post.author?.id===me?.id, user=post.author?.username||'', hasStory=stories.some(s=>s.author?.username===user), likes=Array.isArray(post.likes)?post.likes:[], comments=Array.isArray(post.comments)?post.comments:[], media=post.media||[];
   const avatar=post.author?.profileImage?`style="background-image:url('${safeUrl(post.author.profileImage)}');background-size:cover"`:'';
   const tiles=media.slice(0,4).map((m,i)=>`<button class="gallery-item" type="button" data-open-media="${post._id}:${i}" aria-label="Open post media ${i+1}">${m.type==='video'?`<video muted preload="metadata" src="${safeUrl(m.url)}"></video>`:`<img src="${safeUrl(m.url)}" alt="Post media ${i+1}">`}${i===3&&media.length>4?`<span class="media-more">+${media.length-4}</span>`:''}</button>`).join('');
-  const commentMarkup=c=>{const author=c.author||{}, username=author.username||'', commentAvatar=author.profileImage?`style="background-image:url('${safeUrl(author.profileImage)}');background-size:cover"`:'';const commentLikes=Array.isArray(c.likes)?c.likes:[],liked=commentLikes.some(id=>(id._id||id).toString()===me?.id),isMine=(author._id||author.id||author)?.toString()===me?.id?.toString(),editable=isMine&&c.createdAt&&Date.now()-new Date(c.createdAt).getTime()<=15*60*1000;return `<div class="comment"><button class="avatar avatar-gold comment-avatar" type="button" data-profile="${esc(username)}" aria-label="Open ${esc(author.name||'user')} profile" ${commentAvatar}>${author.profileImage?'':initials(author.name)}</button><div class="comment-body"><div class="comment-line"><p><button class="comment-author" type="button" data-profile="${esc(username)}">${esc(author.name||'User')}${verifiedBadge(author)}</button> ${esc(c.text)}</p>${isMine?`<button class="comment-more" data-comment-menu="${post._id}:${c._id}" aria-label="Comment options">•••</button><div class="comment-menu" id="comment-menu-${post._id}-${c._id}" hidden>${editable?`<button data-edit-comment="${post._id}:${c._id}">Edit</button>`:''}<button data-delete-comment="${post._id}:${c._id}">Delete</button></div>`:''}</div><button class="${liked?'liked':''}" data-comment-like="${post._id}:${c._id}">♥ ${commentLikes.length}</button><button data-reply-to="${post._id}:${c._id}">Reply</button></div></div>`};
+  const commentMarkup=c=>{const author=c.author||{}, username=author.username||'', commentAvatar=author.profileImage?`style="background-image:url('${safeUrl(author.profileImage)}');background-size:cover"`:'';const commentLikes=Array.isArray(c.likes)?c.likes:[],liked=commentLikes.some(id=>(id._id||id).toString()===me?.id),isMine=(author._id||author.id||author)?.toString()===me?.id?.toString(),editable=isMine&&c.createdAt&&Date.now()-new Date(c.createdAt).getTime()<=15*60*1000;return `<div class="comment"><button class="avatar avatar-gold comment-avatar" type="button" data-profile="${esc(username)}" aria-label="Open ${esc(author.name||'user')} profile" ${commentAvatar}>${author.profileImage?'':initials(author.name)}</button><div class="comment-body">${replyLabelHTML(c, comments)}<div class="comment-line"><p><button class="comment-author" type="button" data-profile="${esc(username)}">${esc(author.name||'User')}${verifiedBadge(author)}</button> ${esc(c.text)}</p>${isMine?`<button class="comment-more" data-comment-menu="${post._id}:${c._id}" aria-label="Comment options">•••</button><div class="comment-menu" id="comment-menu-${post._id}-${c._id}" hidden>${editable?`<button data-edit-comment="${post._id}:${c._id}">Edit</button>`:''}<button data-delete-comment="${post._id}:${c._id}">Delete</button></div>`:''}</div><button class="${liked?'liked':''}" data-comment-like="${post._id}:${c._id}">♥ ${commentLikes.length}</button><button data-reply-to="${post._id}:${c._id}">Reply</button></div></div>`};
   return `<article class="post" id="post-${post._id}"><button class="avatar avatar-gold ${hasStory?'has-story':''}" data-avatar="${esc(user)}" ${avatar}>${post.author?.profileImage?'':initials(post.author?.name)}</button><div class="post-content"><div class="post-meta"><strong class="profile-name" data-profile="${esc(user)}">${esc(post.author?.name||'Lion Link User')}${verifiedBadge(post.author)}</strong><span>@${esc(user)} · ${when(post.createdAt)}</span>${mine?`<button class="action" data-menu="${post._id}">•••</button>`:` <button class="follow-small" data-follow="${esc(user)}">Follow</button>`}</div>${post.text?`<p class="post-text">${esc(post.text)}</p>`:''}${media.length?`<div class="post-media gallery gallery-${Math.min(media.length,4)}">${tiles}</div>`:''}<div class="post-actions"><button class="action" data-report-post="${mine?'':post._id}" ${mine?'hidden':''}>⚑ Report</button><button class="action" data-comment-toggle="${post._id}" aria-expanded="false">💬 ${commentCountLabel(post.commentsCount ?? comments.length)}</button><button class="action ${likes.some(id=>(id._id||id).toString()===me?.id)?'liked':''}" data-like="${post._id}">♥ ${likes.length}</button><button class="action" data-share="${post._id}">↗ Share</button></div><div class="post-menu" id="menu-${post._id}" hidden><button data-edit-post="${post._id}">Edit</button><button data-delete-post="${post._id}">Delete</button></div><div class="comment-thread" id="comments-${post._id}" hidden>${comments.map(commentMarkup).join('')}<form data-comment-form="${post._id}"><div class="reply-indicator" hidden></div><input maxlength="280" required placeholder="Write a reply…"><button>Reply</button></form></div></div></article>`;
 };
 function renderPosts(){const all=posts.map(postMarkup).join('')||'<p class="empty-profile">No posts yet.</p>';$('#post-feed').innerHTML=all;const username=(viewedProfile||me)?.username;$('#profile-posts').innerHTML=posts.filter(p=>p.author?.username===username).map(postMarkup).join('')||'<p class="empty-profile">No posts yet.</p>';}
@@ -87,10 +93,10 @@ async function openProfile(username){if(username===me.username){renderProfile(me
 async function loadAnnouncements(){announcements=(await api('/announcements')).announcements;const attachment=a=>(a.media||[]).map(m=>m.type==='video'?`<video class="announcement-media" controls src="${safeUrl(m.url)}"></video>`:`<img class="announcement-media" src="${safeUrl(m.url)}" alt="Announcement media">`).join('');$('#announcement-list').innerHTML=announcements.map(a=>`<article class="announcement-card"><div class="date">${new Date(a.createdAt).toLocaleDateString()}</div><div><span class="official-label">LION LINK ADMIN ${verifiedBadge({role:'admin'})}</span><h3>${esc(a.title)}</h3><p>${linkify(a.body)}</p>${attachment(a)}</div></article>`).join('')||'<p class="empty-profile">No announcements yet.</p>';$('#admin-announcements').innerHTML=announcements.map(a=>`<article class="admin-announcement"><div><b>${esc(a.title)}</b><p>${esc(a.body)}</p>${attachment(a)}</div><button data-remove-announcement="${a._id}">Remove</button></article>`).join('');}
 async function loadChats(){conversations=(await api('/conversations')).conversations;$('#conversations').innerHTML=conversations.map(c=>{const other=c.members.find(x=>(x._id||x.id)!==me.id)||me,last=c.messages.at(-1);return `<button class="conversation" data-chat="${c._id}"><div class="avatar avatar-gold">${initials(other.name)}</div><div><strong>${esc(other.name)}</strong><p>${esc(last?.text||(last?.media?'📎 Media':'Start a conversation'))}</p></div></button>`}).join('')||'<p class="empty-profile">No messages yet. Click a user’s avatar to start one.</p>';}
 function openChat(id){activeChat=conversations.find(c=>c._id===id);if(!activeChat)return;const other=activeChat.members.find(x=>(x._id||x.id)!==me.id)||me;const messageMarkup=m=>{const mine=(m.sender?._id||m.sender)===me.id,media=m.media?.url?`<div class="message-media">${m.media.type==='video'?`<video controls src="${safeUrl(m.media.url)}"></video>`:`<img src="${safeUrl(m.media.url)}" alt="Message attachment">`}</div>`:'';return `<div class="message-row ${mine?'mine':''}"><div class="bubble">${media}${m.text?`<div class="message-text">${esc(m.text)}</div>`:''}</div></div>`};$('#chat-empty').hidden=true;$('#active-chat').hidden=false;$('#active-chat').innerHTML=`<header class="chat-header"><div class="avatar avatar-gold">${initials(other.name)}</div><div><strong>${esc(other.name)}</strong><small>@${esc(other.username)}</small></div></header><div class="messages" id="messages">${activeChat.messages.map(messageMarkup).join('')}</div><form class="chat-compose" id="chat-form"><input maxlength="300" placeholder="Write a message…"><label class="chat-media-picker" title="Attach image or video">📎<input id="chat-media-input" type="file" accept="image/*,video/*" hidden></label><button class="chat-send" type="submit" aria-label="Send message">➤</button></form>`;let chatMedia=null;$('#chat-media-input').onchange=async e=>{const file=e.target.files[0];if(!file)return;if(file.size>5*1024*1024){e.target.value='';return toast('Attachments must be 5 MB or smaller.')}try{chatMedia=await fileData(file);toast('Attachment ready to send.')}catch{toast('That attachment could not be read.')}};$('#chat-form').onsubmit=async e=>{e.preventDefault();const text=e.target.elements[0].value.trim();if(!text&&!chatMedia)return;try{await api(`/conversations/${id}/messages`,{method:'POST',body:JSON.stringify({text,media:chatMedia})});await loadChats();openChat(id)}catch(error){toast(error.message)}};}
-function loginMode(){const signup=$('#login-mode').value==='signup';$('#login-name-field').hidden=!signup;$('#login-username-field').hidden=!signup;$('#login-email').placeholder=signup?'your@email.com':'email or username';}
+function loginMode(){const signup=$('#login-mode').value==='signup';$('#login-name-field').hidden=!signup;$('#login-username-field').hidden=!signup;{const consent=$('#login-consent-field');if(consent)consent.hidden=!signup;}$('#login-email').placeholder=signup?'your@email.com':'email or username';}
 $('#login-mode').onchange=loginMode;
 let authSubmitting=false;
-$('#login-form').onsubmit=async event=>{event.preventDefault();if(authSubmitting)return;authSubmitting=true;const submit=event.target.querySelector('[type="submit"]');const submitLabel=submit.textContent;submit.disabled=true;submit.textContent='Please wait…';try{const signup=$('#login-mode').value==='signup';const payload=signup?{name:$('#login-name').value.trim(),username:$('#login-username').value.trim(),email:$('#login-email').value.trim(),password:$('#login-password').value}:{identity:$('#login-email').value.trim(),password:$('#login-password').value};const result=await api(`/auth/${signup?'signup':'login'}`,{method:'POST',body:JSON.stringify(payload),showLoading:true});token=result.token;localStorage.setItem('lionLinkToken',token);me={...result.user,id:result.user.id||result.user._id};$('#login-overlay').classList.add('hidden');identity();await Promise.all([loadPosts(),loadAnnouncements(),loadChats()]);toast(signup?'Account created — welcome!':'Welcome back!');}catch(error){toast(error.message)}finally{authSubmitting=false;submit.disabled=false;submit.textContent=submitLabel;}};
+$('#login-form').onsubmit=async event=>{event.preventDefault();if(authSubmitting)return;authSubmitting=true;const submit=event.target.querySelector('[type="submit"]');const submitLabel=submit.textContent;submit.disabled=true;submit.textContent='Please wait…';try{const signup=$('#login-mode').value==='signup';if(signup&&!$('#login-consent').checked){const field=$('#login-consent-field');field.classList.add('consent-error');field.querySelector('.consent-message').hidden=false;$('#login-consent').focus();return;}const payload=signup?{name:$('#login-name').value.trim(),username:$('#login-username').value.trim(),email:$('#login-email').value.trim(),password:$('#login-password').value,acceptedTerms:true}:{identity:$('#login-email').value.trim(),password:$('#login-password').value};const result=await api(`/auth/${signup?'signup':'login'}`,{method:'POST',body:JSON.stringify(payload),showLoading:true});token=result.token;localStorage.setItem('lionLinkToken',token);me={...result.user,id:result.user.id||result.user._id};if(signup)try{localStorage.setItem('lionLinkTerms:'+me.id,new Date().toISOString())}catch{}$('#login-overlay').classList.add('hidden');identity();await Promise.all([loadPosts(),loadAnnouncements(),loadChats()]);toast(signup?'Account created — welcome!':'Welcome back!');}catch(error){toast(error.message)}finally{authSubmitting=false;submit.disabled=false;submit.textContent=submitLabel;}};
 // Ask the backend for a short-lived, one-time upload link, then send the
 // actual file bytes straight to Cloudflare R2 — never through our own
 // server, and never stored as text inside the database.
@@ -293,8 +299,10 @@ document.addEventListener('click',e=>{const key=e.target.dataset.info;if(!key)re
 $('#copyright-year').textContent=new Date().getFullYear();
 function renderMobileDrawers(users=[]){const admin=me?.role==='admin'?'<button data-view="admin">⚙ Lion Link Admin</button>':'';const peopleIcon='<span class="ui-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><circle cx="9" cy="8" r="3"/><circle cx="17" cy="10" r="2"/><path d="M3 19c0-3 2.7-5 6-5s6 2 6 5M15 15c3 0 5 1.5 5 4"/></svg></span>';$('#mobile-left-drawer').innerHTML=`<button data-view="feed">⌂ Home</button><button data-view="announcements">📣 Announcements</button><button data-view="groups">${peopleIcon} Groups</button><button data-view="messages">✉ Messages</button><button data-view="events">◇ Events</button><button data-view="profile">♙ Profile</button>${admin}<button id="drawer-post">Create post</button><div class="drawer-account">${esc(me?.name||'')}</div>`;$('#mobile-right-drawer').innerHTML=`<h2>Upcoming events</h2><p>Student Club Fair · Sep 18</p><p>Lions Social Night · Sep 20</p><h2>People you may know</h2>${users.map(personMarkup).join('')||'<p>Loading people…</p>'}`;$('#drawer-post').onclick=()=>{$('#quick-post-modal').hidden=false;closeDrawers();};}
 function closeDrawers(){document.querySelectorAll('.mobile-drawer').forEach(x=>x.hidden=true);$('#drawer-scrim').hidden=true;}
-function openDrawer(side){$('#mobile-'+side+'-drawer').hidden=false;$('#drawer-scrim').hidden=false;}
-$('#drawer-scrim').onclick=closeDrawers;let touchStart;document.addEventListener('touchstart',e=>{touchStart=e.changedTouches[0];},{passive:true});document.addEventListener('touchend',e=>{if(!touchStart||innerWidth>800)return;const end=e.changedTouches[0],dx=end.clientX-touchStart.clientX,dy=end.clientY-touchStart.clientY;if(Math.abs(dx)>70&&Math.abs(dx)>Math.abs(dy))openDrawer(dx>0?'left':'right');},{passive:true});
+// True while any popup, viewer or the sign-in screen is showing.
+function overlayOpen(){return !!document.querySelector('.edit-modal:not([hidden]), .media-modal:not([hidden]), .terms-gate:not([hidden]), #login-overlay:not(.hidden)');}
+function openDrawer(side){if(overlayOpen())return;$('#mobile-'+side+'-drawer').hidden=false;$('#drawer-scrim').hidden=false;}
+$('#drawer-scrim').onclick=closeDrawers;let touchStart;document.addEventListener('touchstart',e=>{touchStart=(overlayOpen()||e.target.closest?.('.crop-stage,.trim-card,.media-modal,.edit-modal'))?null:e.changedTouches[0];},{passive:true});document.addEventListener('touchend',e=>{if(!touchStart||innerWidth>800||overlayOpen())return;const end=e.changedTouches[0],dx=end.clientX-touchStart.clientX,dy=end.clientY-touchStart.clientY;if(Math.abs(dx)>70&&Math.abs(dx)>Math.abs(dy))openDrawer(dx>0?'left':'right');},{passive:true});
 const originalIdentity=identity;identity=function(){originalIdentity();if(me){const avatar=$('.account .avatar');avatar.style.backgroundImage=me.profileImage?`url(${safeUrl(me.profileImage)})`:'';avatar.style.backgroundSize='cover';avatar.classList.toggle('has-story',stories.some(s=>s.author?.username===me.username));loadPeople();}};
 
 // Reliability and mobile usability improvements.
@@ -1361,10 +1369,24 @@ renderPosts = function() {
   // renderMessages() rebuilds the whole compose box, which would erase
   // whatever the person has started typing for their next message. Use this
   // for background refreshes so a draft survives the re-render.
+  // Always land on the newest message: pin to the bottom now, again after layout, and
+  // again as photos/videos finish loading (they change the height). A background
+  // refresh keeps your place instead if you had scrolled up to read older messages.
+  let restoreScroll = null;
+  const pinChatToLatest = stream => {
+    if (!stream) return;
+    if (restoreScroll !== null) { stream.scrollTop = restoreScroll; return; }
+    const pin = () => { stream.scrollTop = stream.scrollHeight; };
+    pin(); requestAnimationFrame(pin); setTimeout(pin, 120);
+    stream.querySelectorAll('img,video').forEach(media => media.addEventListener(media.tagName === 'VIDEO' ? 'loadedmetadata' : 'load', pin, { once: true }));
+  };
   const rerenderKeepingDraft = () => {
     const current = document.getElementById('x-message-input');
     const draft = current?.value || '', hadFocus = document.activeElement === current;
+    const oldStream = document.getElementById('x-message-stream');
+    restoreScroll = oldStream && oldStream.scrollHeight - oldStream.scrollTop - oldStream.clientHeight > 120 ? oldStream.scrollTop : null;
     renderMessages();
+    restoreScroll = null;
     const box = document.getElementById('x-message-input');
     if (box && draft) box.value = draft;
     if (box && hadFocus) box.focus();
@@ -1373,12 +1395,16 @@ renderPosts = function() {
   // so the open conversation never collects an unread badge.
   const syncOpenChat = async () => {
     const open = activeChat, summary = open && conversations.find(c => c._id === open._id);
-    if (!summary || !unreadCount(summary)) { renderInbox(); return; }
+    if (!summary) { renderInbox(); return; }
+    const shown = (open.messages || []).filter(message => !message.pending).at(-1), latest = summary.lastMessage;
+    const changed = !!latest && (!shown || String(shown._id) !== String(latest._id) || (mine(latest) && !!shown.readAt !== !!latest.readAt));
+    const wasUnread = unreadCount(summary) > 0;
+    if (!wasUnread && !changed) { renderInbox(); return; }
     summary.unreadCount = 0;
     if (summary.lastMessage && !mine(summary.lastMessage)) summary.lastMessage.readAt = summary.lastMessage.readAt || new Date().toISOString();
     renderInbox();
     try {
-      api(`/conversations/${open._id}/read`, { method: 'POST' }).then(() => loadNotifications?.()).catch(() => {});
+      if (wasUnread) api(`/conversations/${open._id}/read`, { method: 'POST' }).then(() => loadNotifications?.()).catch(() => {});
       const { conversation } = await api(`/conversations/${open._id}?limit=50`);
       if (activeChat?._id !== open._id) return;
       (conversation.messages || []).forEach(message => { if (!mine(message)) message.readAt = message.readAt || new Date().toISOString(); });
@@ -1406,7 +1432,7 @@ renderPosts = function() {
   const unreadCount = c => Number(c.unreadCount ?? ((inboxLast(c) && !mine(inboxLast(c)) && !inboxLast(c).readAt) ? 1 : 0)) || 0;
   const persist = () => localStorage.setItem('lionLinkViewState', JSON.stringify({ view: document.querySelector('.view.active')?.id?.replace(/-view$/, '') || 'feed', chat: activeChat?._id || null }));
   const updateBadge = () => {
-    const total=conversations.reduce((sum,c)=>sum+unreadCount(c),0);
+    const total=conversations.reduce((sum,c)=>sum+(unreadCount(c)>0?1:0),0);
     const label = total>99?'99+':total;
     // The desktop sidebar and the mobile bottom nav are two separate
     // elements (the mobile one never had anywhere to show this at all) —
@@ -1419,12 +1445,12 @@ renderPosts = function() {
   const renderChat = () => { if(!activeChat)return renderWelcome(); const other=otherMember(activeChat); const rows=activeChat.loadingMessages?skeletonMessages():(activeChat.messages||[]).map(message=>{const own=mine(message),media=message.media?.url?`<div class="x-message-media">${message.media.type==='video'?`<video controls src="${safeUrl(message.media.url)}"></video>`:message.media.type==='audio'?`<audio controls src="${safeUrl(message.media.url)}"></audio>`:`<img src="${safeUrl(message.media.url)}" alt="Message attachment">`}</div>`:'';const status=own?`<small class="x-status">${message.pending?'Sending':message.readAt?'Read':message.deliveredAt?'Delivered':'Sent'}</small>`:'';return `<article class="x-message ${own?'mine':''}">${own?'':avatar(other)}<div><div class="x-bubble">${media}${message.text?`<p>${esc(message.text)}</p>`:''}</div><time>${when(message.createdAt)} ${status}</time></div></article>`;}).join('')||'<p class="x-empty">Say hello to start the conversation.</p>';
     const presence = other.lastActiveAt && Date.now() - new Date(other.lastActiveAt).getTime() < 2 * 60 * 1000 ? 'Active now' : other.lastActiveAt ? `Last active ${when(other.lastActiveAt)} ago` : '';
     $('#x-chat-panel').innerHTML=`<header class="x-chat-header"><button type="button" data-x-back aria-label="Back to inbox">‹</button>${avatar(other)}<button class="x-chat-person" type="button" data-profile="${esc(other.username)}"><b>${esc(other.name)}${verifiedBadge(other)}</b><small>@${esc(other.username)}${presence ? ` · ${presence}` : ''}</small></button></header><section class="x-message-stream" id="x-message-stream">${rows}</section><form id="x-compose" class="x-compose"><button class="x-emoji" type="button" title="Add emoji" data-emoji>☺</button><label title="Attach photo or video"><span class="ui-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M21.44 11.05l-9.19 9.19a5.5 5.5 0 0 1-7.78-7.78l9.2-9.19a3.5 3.5 0 0 1 4.95 4.95l-9.2 9.19a1.5 1.5 0 0 1-2.12-2.12l8.49-8.48"/></svg></span><input id="x-media-input" type="file" accept="image/*,video/*" hidden></label><textarea id="x-message-input" maxlength="300" rows="1" placeholder="Start a new message"></textarea><button class="small-post" type="submit">Send</button></form><div id="x-attach-preview" class="chat-media-preview"></div>`;
-    const stream=$('#x-message-stream');stream.scrollTop=stream.scrollHeight; $('#x-media-input').onchange=async e=>{const file=e.target.files[0];if(!file)return;if(file.size>MAX_UPLOAD_BYTES)return toast('That file is over 60 MB — please choose a smaller one.');try{attachedMedia=await fileData(file);renderAttachPreview();}catch{toast('That attachment could not be read.');}};
+    const stream=$('#x-message-stream');pinChatToLatest(stream); $('#x-media-input').onchange=async e=>{const file=e.target.files[0];if(!file)return;if(file.size>MAX_UPLOAD_BYTES)return toast('That file is over 60 MB — please choose a smaller one.');try{attachedMedia=await fileData(file);renderAttachPreview();}catch{toast('That attachment could not be read.');}};
   };
   const renderMessages = () => { messagesView.innerHTML='<header class="page-header x-messages-header"><div><p class="eyebrow">PRIVATE CONVERSATIONS</p><h1>Messages</h1></div><button class="small-post" id="x-new-message" type="button">New message</button></header><div class="x-messages-shell"><aside class="x-inbox"><label class="x-search">⌕<input id="x-inbox-search" type="search" placeholder="Search messages or people"></label><div id="x-conversation-list"></div></aside><section class="x-chat" id="x-chat-panel"></section></div>';$('.x-messages-shell').classList.toggle('x-chat-open',!!activeChat);activeChat?(renderChat(),renderInbox()):renderWelcome();$('#x-new-message').onclick=openNew;$('#x-inbox-search').oninput=e=>search(e.target.value); };
   const openNew = () => { requestNotifications(); $('#user-search-modal').hidden=false; $('#user-search-input').value=''; $('#user-search-results').innerHTML='<p class="empty-profile">Search registered Lion Link users.</p>'; $('#user-search-input').focus(); };
   const search = async value => { const query=value.trim().toLowerCase(); if(!query){renderInbox();return;} const local=conversations.filter(c=>`${otherMember(c).name} ${otherMember(c).username}`.toLowerCase().includes(query)); $('#x-conversation-list').innerHTML=local.map(c=>`<div class="x-conversation" role="button" tabindex="0" data-x-chat="${c._id}">${avatar(otherMember(c))}<span><b>${esc(otherMember(c).name)}</b><small>@${esc(otherMember(c).username)}</small><p>${esc(preview(inboxLast(c)))}</p></span></div>`).join(''); try{const {users}=await api('/users/search/'+encodeURIComponent(query));const unseen=users.filter(u=>!conversations.some(c=>otherMember(c).username===u.username));if(unseen.length)$('#x-conversation-list').insertAdjacentHTML('beforeend',`<p class="x-search-heading">People</p>${unseen.map(u=>`<div class="x-conversation" role="button" tabindex="0" data-start-dm="${esc(u.username)}">${avatar(u)}<span><b>${esc(u.name)}</b><small>@${esc(u.username)}</small><p>Start a conversation</p></span></div>`).join('')}`);}catch{} };
-  loadChats = async function(){let result;try{result=await api('/conversations');}finally{inboxLoaded=true;}const before=new Set(knownIncoming), previous=activeChat;conversations=(result.conversations||[]).sort((a,b)=>new Date(b.updatedAt)-new Date(a.updatedAt));conversations.forEach(c=>{const message=inboxLast(c);if(message&&!mine(message)&&!message.readAt){const key=`${c._id}:${message._id}`;if(knownIncoming.size&&!before.has(key)&&Notification.permission==='granted')new Notification(otherMember(c).name,{body:preview(message),tag:key});knownIncoming.add(key);}});if(previous){const summary=conversations.find(c=>c._id===previous._id);activeChat=summary?{...summary,messages:previous.messages||[]}:null;}if(!activeChat){renderMessages();return;}/* A chat is open: refresh only the inbox so the compose box, draft and keyboard are left alone. */if(document.querySelector('#messages-view.active')&&document.visibilityState==='visible')syncOpenChat();else renderInbox();};
+  loadChats = async function(){let result;try{result=await api('/conversations');}finally{inboxLoaded=true;}const before=new Set(knownIncoming), previous=activeChat;conversations=(result.conversations||[]).sort((a,b)=>new Date(b.updatedAt)-new Date(a.updatedAt));conversations.forEach(c=>{const message=inboxLast(c);if(message&&!mine(message)&&!message.readAt){const key=`${c._id}:${message._id}`;if(knownIncoming.size&&!before.has(key)&&Notification.permission==='granted')new Notification(otherMember(c).name,{body:preview(message),tag:key});knownIncoming.add(key);}});if(previous){const summary=conversations.find(c=>c._id===previous._id);activeChat=summary?{...summary,messages:previous.messages||[]}:null;}if(!activeChat){if(document.getElementById('x-conversation-list')){if(!document.getElementById('x-inbox-search')?.value)renderInbox();else updateBadge();}else renderMessages();return;}/* A chat is open: refresh only the inbox so the compose box, draft and keyboard are left alone. */if(document.querySelector('#messages-view.active')&&document.visibilityState==='visible')syncOpenChat();else renderInbox();};
   openChat = async id => { const summary=conversations.find(c=>c._id===id);if(!summary)return;/* Clear this chat's unread count (and the nav badge) the instant it opens, not after a network round trip. */const hadUnread=unreadCount(summary)>0;if(hadUnread){summary.unreadCount=0;if(summary.lastMessage&&!mine(summary.lastMessage))summary.lastMessage.readAt=summary.lastMessage.readAt||new Date().toISOString();}const cached=conversationCache.get(id)||(summary.isNew?[]:undefined);const hadMessages=!!cached||(activeChat?._id===id&&(activeChat.messages||[]).length>0);activeChat={...summary,messages:cached||(activeChat?._id===id?activeChat.messages||[]:[]),loadingMessages:!hadMessages};show('messages');persist();renderMessages();try{const {conversation}=await api(`/conversations/${id}?limit=50`);if(activeChat?._id!==id)return;activeChat=conversation;conversationCache.set(id,conversation.messages||[]);renderMessages();if(hadUnread){activeChat.messages.forEach(message=>{if(!mine(message))message.readAt=message.readAt||new Date().toISOString();});api(`/conversations/${id}/read`,{method:'POST'}).then(()=>loadNotifications?.()).catch(()=>{});}}catch(error){if(activeChat?._id===id){activeChat.loadingMessages=false;renderMessages();}toast(error.message);}};
   const startDM = async username => {try{const {conversation}=await api('/conversations',{method:'POST',body:JSON.stringify({username}),showLoading:true});await loadChats();$('#user-search-modal').hidden=true;await openChat(conversation._id);}catch(error){toast(error.message);}};
   document.addEventListener('click',e=>{const chat=e.target.closest('[data-x-chat]');if(chat&&!e.target.closest('[data-profile]')){e.preventDefault();openChat(chat.dataset.xChat);}if(e.target.closest('[data-x-back]')){activeChat=null;persist();renderMessages();}if(e.target.closest('[data-new-dm]'))openNew();const start=e.target.closest('[data-start-dm]');if(start)startDM(start.dataset.startDm);if(e.target.closest('[data-emoji]')){$('#x-message-input').value+='😊';$('#x-message-input').focus();}if(e.target.id==='x-remove-attach'){attachedMedia=null;renderAttachPreview();const input=document.getElementById('x-media-input');if(input)input.value='';}
@@ -1439,7 +1465,14 @@ if(e.target.id==='x-edit-attach'&&attachedMedia){
   const originalSearch=$('#user-search-input').oninput; $('#user-search-input').oninput=e=>{originalSearch?.(e);}; document.addEventListener('click',e=>{const person=e.target.closest('#user-search-results .person');const username=person?.querySelector('[data-profile]')?.dataset.profile||person?.querySelector('[data-avatar]')?.dataset.avatar;if(username){e.preventDefault();e.stopPropagation();startDM(username);}},true);
   const baseShow=show;show=function(view){baseShow(view);persist();if(view==='messages'&&activeChat)syncOpenChat();};
   const restore=()=>{if(restored||!me)return;restored=true;try{const state=JSON.parse(localStorage.getItem('lionLinkViewState')||'{}');if(state.view){show(state.view);if(state.view==='messages'&&state.chat)openChat(state.chat);}}catch{}};const baseIdentity=identity;identity=function(){baseIdentity();restore();};
-  renderMessages(); if(token) loadChats().catch(()=>{}); setInterval(()=>{if(token&&document.visibilityState==='visible')loadChats().catch(()=>{});},15000);
+  renderMessages(); if(token) loadChats().catch(()=>{}); /* Fast checking: a tiny request every 2s (Messages open) or 4s (elsewhere). The inbox and open chat
+     reload only when something changed: a new message, a new unread count, or a read tick. */
+  let pulseSignature=null,lastFullLoad=0;
+  const pulse=async()=>{let items;try{({items}=await api('/conversations/pulse'));}catch{/* pulse endpoint not available: fall back to a full reload, at most every 10s */if(Date.now()-lastFullLoad>10000){lastFullLoad=Date.now();return loadChats();}return;}const signature=items.map(i=>`${i._id}:${i.unread}:${i.lastId}:${i.lastRead?1:0}`).sort().join('|');if(signature===pulseSignature)return;pulseSignature=signature;await loadChats();};
+  const pulseDelay=()=>document.querySelector('#messages-view.active')?2000:4000;
+  const pulseTick=async()=>{try{if(token&&me&&document.visibilityState==='visible')await pulse();}catch{}setTimeout(pulseTick,pulseDelay());};
+  setTimeout(pulseTick,2000);
+  document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible'&&token&&me)pulse().catch(()=>{});});
 
   // (The feed now shows skeleton placeholders while it loads instead of a
   // full-screen spinner, so no wrapper is needed here.)
@@ -1509,8 +1542,8 @@ if(e.target.id==='x-edit-attach'&&attachedMedia){
     if (!Array.isArray(conversations) || !me) return;
     const total = conversations.reduce((count, conversation) => {
       const last = conversation.lastMessage || conversation.messages?.at(-1);
-      // Total unread messages (server-supplied per conversation), so opening a chat counts the badge down.
-      return count + (Number(conversation.unreadCount ?? (last && String(last.sender?._id || last.sender) !== String(me.id) && !last.readAt ? 1 : 0)) || 0);
+      // One per chat that has something unread, so opening a chat counts the badge down by one.
+      return count + ((Number(conversation.unreadCount ?? (last && String(last.sender?._id || last.sender) !== String(me.id) && !last.readAt ? 1 : 0)) || 0) > 0 ? 1 : 0);
     }, 0);
     const label = total > 99 ? '99+' : total;
     document.querySelectorAll('#message-count, .bottom-nav-message-count').forEach(badge => { badge.hidden = !total; badge.textContent = label; });
@@ -1891,7 +1924,7 @@ $('.message-profile').onclick = async () => {
     renderMobileDrawersBase(users);
     const left = $('#mobile-left-drawer');
     if (left && !left.querySelector('.drawer-legal')) {
-      left.insertAdjacentHTML('beforeend', '<nav class="drawer-legal" aria-label="About Lion Link"><button type="button" data-info="terms">Terms &amp; Conditions</button><button type="button" data-info="privacy">Privacy</button><button type="button" data-info="about">About</button></nav>');
+      left.insertAdjacentHTML('beforeend', '<nav class="drawer-legal" aria-label="About Lion Link"><button type="button" data-info="terms">Terms &amp; Conditions</button><button type="button" data-info="privacy">Privacy</button><button type="button" data-info="about">About</button><a class=\"drawer-brand\" href=\"https://linklabs-studio.netlify.app/\" target=\"_blank\" rel=\"noopener noreferrer\"><span>Built by</span> <b>LinkLabs</b> <i aria-hidden=\"true\">↗</i></a></nav>');
     }
   };
   document.addEventListener('click', event => { if (event.target.closest('.mobile-drawer [data-info]')) closeDrawers?.(); });
@@ -2075,4 +2108,68 @@ $('.message-profile').onclick = async () => {
     if (follow) { cache.delete(follow.dataset.follow); cachedAt.delete(follow.dataset.follow); }
     if (event.target.closest?.('.follow-profile') && viewedProfile?.username) { cache.delete(viewedProfile.username); cachedAt.delete(viewedProfile.username); }
   }, true);
+})();
+
+// =====================================================================
+// Terms & Conditions
+//  - New accounts must tick "I agree" on the sign-up form (see index.html).
+//  - Anyone signed in who hasn't agreed yet (accounts made before this
+//    existed, or Google sign-ups) gets a one-time gate straight after login.
+// Agreement is saved on the account; it's also remembered on this device so
+// the gate never nags if the network hiccups.
+// =====================================================================
+(() => {
+  const consentField = $('#login-consent-field');
+  $('#login-consent')?.addEventListener('change', () => {
+    consentField.classList.remove('consent-error');
+    const message = consentField.querySelector('.consent-message'); if (message) message.hidden = true;
+  });
+
+  const gate = document.createElement('div');
+  gate.className = 'terms-gate'; gate.id = 'terms-gate'; gate.hidden = true;
+  gate.setAttribute('role', 'dialog'); gate.setAttribute('aria-modal', 'true'); gate.setAttribute('aria-labelledby', 'terms-gate-title');
+  gate.innerHTML = `<section class="terms-gate-card">
+      <span class="brand-mark">L</span>
+      <h2 id="terms-gate-title">Before you continue</h2>
+      <p>Please review and agree to our Terms &amp; Conditions and Privacy Policy to keep using Lion Link.</p>
+      <label class="consent-row"><input type="checkbox" id="terms-gate-check" /><span class="consent-text">I have read and agree to the <button type="button" class="consent-link" data-info="terms">Terms &amp; Conditions</button> and <button type="button" class="consent-link" data-info="privacy">Privacy Policy</button>.</span></label>
+      <button type="button" class="post-button" id="terms-gate-accept" disabled>Agree and continue</button>
+      <button type="button" class="text-link" id="terms-gate-logout">Log out</button>
+    </section>`;
+  document.body.append(gate);
+  const box = $('#terms-gate-check'), accept = $('#terms-gate-accept');
+
+  const flagKey = () => 'lionLinkTerms:' + me?.id;
+  const needsTerms = () => {
+    if (!me) return false;
+    try {
+      if (me.termsAcceptedAt) { localStorage.setItem(flagKey(), String(me.termsAcceptedAt)); return false; }
+      return !localStorage.getItem(flagKey());
+    } catch { return !me.termsAcceptedAt; }
+  };
+  const showGate = () => {
+    box.checked = false; accept.disabled = true;
+    gate.hidden = false; document.body.classList.add('terms-locked');
+    closeDrawers?.();
+    setTimeout(() => box.focus(), 50);
+  };
+  const hideGate = () => { gate.hidden = true; document.body.classList.remove('terms-locked'); };
+
+  box.addEventListener('change', () => { accept.disabled = !box.checked; });
+  accept.addEventListener('click', async () => {
+    if (!box.checked) return;
+    accept.disabled = true; accept.textContent = 'Saving…';
+    try { const result = await api('/auth/accept-terms', { method: 'POST' }); if (result?.termsAcceptedAt && me) me.termsAcceptedAt = result.termsAcceptedAt; } catch { /* remembered on this device below */ }
+    try { localStorage.setItem(flagKey(), new Date().toISOString()); } catch {}
+    accept.textContent = 'Agree and continue';
+    hideGate();
+  });
+  $('#terms-gate-logout').addEventListener('click', () => $('#logout').click());
+  $('#logout').addEventListener('click', () => { if (!me) hideGate(); });
+
+  const identityBeforeTerms = identity;
+  identity = function () {
+    identityBeforeTerms();
+    if (needsTerms() && gate.hidden) showGate();
+  };
 })();
