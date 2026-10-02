@@ -25,6 +25,8 @@ const userSchema = new mongoose.Schema(
 
     googleSubject: { type: String, unique: true, sparse: true },
     lastActiveAt: { type: Date, default: Date.now },
+    // When the person agreed to the Terms & Conditions and Privacy Policy (null = not yet).
+    termsAcceptedAt: { type: Date, default: null },
 
     username: {
       type: String,
