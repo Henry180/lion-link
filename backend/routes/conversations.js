@@ -53,19 +53,21 @@ const inboxItem = conversation => {
   };
 };
 
-// How many messages from the other person the viewer has not opened yet, per
-// conversation. The inbox only carries the last message, so this is counted
-// separately; the frontend shows it as the badge on each DM and sums it for
-// the Messages nav badge.
+// Messages from the other person that the viewer has not opened yet.
+const unreadExpr = viewer => ({ $size: { $filter: {
+  input: { $ifNull: ["$messages", []] },
+  as: "m",
+  cond: { $and: [ { $ne: ["$$m.sender", viewer] }, { $eq: [{ $ifNull: ["$$m.readAt", null] }, null] } ] }
+} } });
+
+// Per-conversation unread count for the inbox. The inbox itself only carries
+// the last message, so this is counted separately; the frontend shows it on
+// each DM and counts how many DMs have anything unread for the nav badge.
 async function unreadCounts(userId) {
   const viewer = new mongoose.Types.ObjectId(String(userId));
   const rows = await Conversation.aggregate([
     { $match: { members: viewer } },
-    { $project: { unread: { $size: { $filter: {
-      input: { $ifNull: ["$messages", []] },
-      as: "m",
-      cond: { $and: [ { $ne: ["$$m.sender", viewer] }, { $eq: [{ $ifNull: ["$$m.readAt", null] }, null] } ] }
-    } } } } }
+    { $project: { unread: unreadExpr(viewer) } }
   ]);
   return new Map(rows.map(row => [String(row._id), row.unread]));
 }
@@ -80,6 +82,20 @@ router.get("/", auth, safe(async (req, res) => {
     unreadCounts(req.user.userId)
   ]);
   res.json({ conversations: conversations.map(conversation => ({ ...inboxItem(conversation), unreadCount: unread.get(String(conversation._id)) || 0 })) });
+}));
+
+// Tiny, cheap status check the app calls every couple of seconds. It returns
+// no message content, only enough to tell whether anything changed (a new
+// message, a new unread count, or the last message being read). The app
+// reloads the inbox / open chat only when this changes.
+router.get("/pulse", auth, safe(async (req, res) => {
+  const viewer = new mongoose.Types.ObjectId(String(req.user.userId));
+  const rows = await Conversation.aggregate([
+    { $match: { members: viewer } },
+    { $project: { last: { $arrayElemAt: ["$messages", -1] }, unread: unreadExpr(viewer) } },
+    { $project: { unread: 1, lastId: "$last._id", lastRead: { $ne: [{ $ifNull: ["$last.readAt", null] }, null] } } }
+  ]);
+  res.set("Cache-Control", "no-store").json({ items: rows.map(row => ({ _id: row._id, unread: row.unread, lastId: row.lastId || null, lastRead: !!row.lastRead })) });
 }));
 
 router.post("/", auth, safe(async (req, res) => {
