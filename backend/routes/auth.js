@@ -73,6 +73,10 @@ async function register(req, res) {
       });
     }
 
+    if (req.body.acceptedTerms !== true) {
+      return res.status(400).json({ message: "Please agree to the Terms & Conditions to create an account" });
+    }
+
     const existingUser = await User.findOne({
       email
     });
@@ -93,7 +97,8 @@ async function register(req, res) {
       name,
       email,
       password: hashedPassword,
-      username
+      username,
+      termsAcceptedAt: new Date()
     });
 
     const token = jwt.sign(
@@ -111,7 +116,7 @@ async function register(req, res) {
       message: "Account created successfully",
       token,
       user: {
-        id: user._id,
+        id: user._id, termsAcceptedAt: user.termsAcceptedAt || null,
         name: user.name,
         email: user.email,
         username: user.username,
@@ -169,9 +174,9 @@ router.post("/session", auth, async (req, res) => {
 });
 
 router.get("/me", auth, async (req, res) => {
-  const user = await User.findById(req.user.userId).select("name email username role bio profileImage coverImage location followers following createdAt").populate("following", "username");
+  const user = await User.findById(req.user.userId).select("name email username role bio profileImage coverImage location followers following createdAt termsAcceptedAt").populate("following", "username");
   if (!user) return res.status(404).json({ message: "User not found" });
-  res.json({ user: { id: user._id, name: user.name, email: user.email, username: user.username, role: user.role, bio: user.bio, profileImage: user.profileImage, coverImage: user.coverImage, location: user.location, followers: user.followers.length, following: user.following.length, followingUsernames: user.following.map(item => item.username), createdAt: user.createdAt } });
+  res.json({ user: { id: user._id, termsAcceptedAt: user.termsAcceptedAt || null, name: user.name, email: user.email, username: user.username, role: user.role, bio: user.bio, profileImage: user.profileImage, coverImage: user.coverImage, location: user.location, followers: user.followers.length, following: user.following.length, followingUsernames: user.following.map(item => item.username), createdAt: user.createdAt } });
 });
 
 router.patch("/me", auth, async (req, res) => {
@@ -182,7 +187,16 @@ router.patch("/me", auth, async (req, res) => {
   if (req.body.profileImage) user.profileImage = req.body.profileImage;
   if (req.body.coverImage) user.coverImage = req.body.coverImage;
   await user.save();
-  res.json({ user: { id:user._id, name:user.name, email:user.email, username:user.username, role:user.role, bio:user.bio, profileImage:user.profileImage, coverImage:user.coverImage, location:user.location, createdAt:user.createdAt } });
+  res.json({ user: { id:user._id, termsAcceptedAt: user.termsAcceptedAt || null, name:user.name, email:user.email, username:user.username, role:user.role, bio:user.bio, profileImage:user.profileImage, coverImage:user.coverImage, location:user.location, createdAt:user.createdAt } });
+});
+
+// Records that the signed-in person agreed to the Terms & Conditions and Privacy Policy.
+router.post("/accept-terms", auth, async (req, res) => {
+  const now = new Date();
+  await User.updateOne({ _id: req.user.userId, termsAcceptedAt: null }, { $set: { termsAcceptedAt: now } });
+  const user = await User.findById(req.user.userId).select("termsAcceptedAt");
+  if (!user) return res.status(404).json({ message: "User not found" });
+  res.json({ termsAcceptedAt: user.termsAcceptedAt || now });
 });
 
 router.post("/become-admin", auth, rateLimit("become-admin", 8, 15 * 60 * 1000), async (req, res) => {
@@ -203,7 +217,7 @@ router.post("/become-admin", auth, rateLimit("become-admin", 8, 15 * 60 * 1000),
   if (!invite) return res.status(400).json({ message: "That admin invite code is invalid or has expired." });
   user.role = "admin"; await user.save();
   const token = jwt.sign({ userId: user._id, role: user.role }, process.env.JWT_SECRET, { expiresIn: "7d" });
-  res.json({ token, user: { id: user._id, name: user.name, email: user.email, username: user.username, role: user.role, bio: user.bio, profileImage: user.profileImage, coverImage: user.coverImage, location: user.location, createdAt: user.createdAt } });
+  res.json({ token, user: { id: user._id, termsAcceptedAt: user.termsAcceptedAt || null, name: user.name, email: user.email, username: user.username, role: user.role, bio: user.bio, profileImage: user.profileImage, coverImage: user.coverImage, location: user.location, createdAt: user.createdAt } });
 });
 
 router.post("/forgot-password", rateLimit("forgot-password", 5, 15 * 60 * 1000), async (req, res) => {
@@ -288,7 +302,7 @@ router.post("/login", rateLimit("login", 10, 15 * 60 * 1000), async (req, res) =
       message: "Login successful",
       token,
       user: {
-        id: user._id,
+        id: user._id, termsAcceptedAt: user.termsAcceptedAt || null,
         name: user.name,
         email: user.email,
         username: user.username,
