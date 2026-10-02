@@ -11,7 +11,12 @@ const messageSchema = new mongoose.Schema({
   createdAt: { type: Date, default: Date.now }
 }, { _id: true });
 
-module.exports = mongoose.model("Conversation", new mongoose.Schema({
+const conversationSchema = new mongoose.Schema({
   members: [{ type: mongoose.Schema.Types.ObjectId, ref: "User" }],
   messages: [messageSchema]
-}, { timestamps: true }));
+}, { timestamps: true });
+
+// Every inbox / unread check looks conversations up by member.
+conversationSchema.index({ members: 1 });
+
+module.exports = mongoose.model("Conversation", conversationSchema);
