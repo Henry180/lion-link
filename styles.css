@@ -2711,3 +2711,116 @@ body.dark .x-compose textarea { background:#000; color:#fff; }
   .info-card { padding: 28px 22px 24px; }
   .info-card h2 { font-size: 22px; }
 }
+
+/* =========================================================
+   TERMS CONSENT (sign-up checkbox + post-login gate)
+   ========================================================= */
+.login-card .consent-row,
+.terms-gate-card .consent-row {
+  display: grid;
+  grid-template-columns: 20px 1fr;
+  gap: 4px 11px;
+  align-items: start;
+  margin-top: 16px;
+  padding: 12px 14px;
+  border: 1px solid var(--line, #dce8df);
+  border-radius: 10px;
+  background: rgba(0, 122, 61, 0.04);
+  color: var(--ink, #14231a);
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 1.5;
+  text-align: left;
+  cursor: pointer;
+  transition: border-color 0.15s, background 0.15s;
+}
+.login-card .consent-row[hidden] { display: none; }
+.login-card .consent-row input[type="checkbox"],
+.terms-gate-card .consent-row input[type="checkbox"] {
+  width: 18px;
+  height: 18px;
+  margin: 1px 0 0;
+  padding: 0;
+  accent-color: var(--green, #007a3d);
+  cursor: pointer;
+}
+.consent-row:has(input:checked) { border-color: var(--green, #007a3d); background: rgba(0, 122, 61, 0.09); }
+.consent-text { grid-column: 2; }
+.consent-link {
+  border: 0;
+  background: none;
+  padding: 0;
+  font: inherit;
+  font-weight: 700;
+  color: var(--green, #007a3d);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  cursor: pointer;
+}
+.consent-message { grid-column: 1 / -1; color: #c7352a; font-size: 12px; font-weight: 600; }
+.consent-message[hidden] { display: none; }
+.login-card .consent-row.consent-error { border-color: #c7352a; background: rgba(199, 53, 42, 0.06); animation: consent-shake 0.35s; }
+@keyframes consent-shake {
+  20%, 60% { transform: translateX(-5px); }
+  40%, 80% { transform: translateX(5px); }
+}
+
+.terms-gate {
+  position: fixed;
+  inset: 0;
+  z-index: 150;
+  display: grid;
+  place-items: center;
+  padding: 18px;
+  background: rgba(0, 48, 25, 0.74);
+  backdrop-filter: blur(5px);
+  overflow-y: auto;
+}
+.terms-gate[hidden] { display: none; }
+.terms-gate-card {
+  width: min(440px, 100%);
+  box-sizing: border-box;
+  padding: 34px 32px 24px;
+  border-radius: 18px;
+  background: var(--paper, #fff);
+  color: var(--ink, #14231a);
+  text-align: center;
+  box-shadow: 0 22px 60px rgba(0, 0, 0, 0.3);
+}
+.terms-gate-card .brand-mark { display: inline-grid; }
+.terms-gate-card h2 { margin: 16px 0 8px; font: 700 24px "Playfair Display", serif; }
+.terms-gate-card p { margin: 0 0 6px; color: var(--muted, #5b6470); font-size: 14px; line-height: 1.6; }
+.terms-gate-card .post-button { width: 100%; margin: 18px 0 8px; }
+.terms-gate-card .post-button:disabled { opacity: 0.5; cursor: not-allowed; }
+.terms-gate-card .text-link { display: inline-block; padding: 6px; }
+body.terms-locked { overflow: hidden; }
+/* The Terms/Privacy pages must open above the sign-up screen and the gate. */
+#info-modal { z-index: 200; }
+
+/* =========================================================
+   REPLY LABEL, DRAWER CREDIT, POPUP TOUCH HANDLING
+   ========================================================= */
+.comment-replying { display: block; margin-bottom: 2px; font-size: 12px; color: var(--muted, #5b6470); }
+.comment-replying b { font-weight: 600; color: inherit; }
+
+.drawer-legal .drawer-brand {
+  flex-basis: 100%;
+  display: flex;
+  align-items: baseline;
+  gap: 5px;
+  margin-top: 6px;
+  padding-top: 12px;
+  border-top: 1px dashed rgba(128, 128, 128, 0.35);
+  font-size: 12px;
+  color: inherit;
+  opacity: 0.85;
+  text-decoration: none;
+}
+.drawer-legal .drawer-brand b { font-weight: 700; letter-spacing: 0.02em; color: var(--green, #007a3d); }
+.drawer-legal .drawer-brand i { font-style: normal; font-size: 11px; opacity: 0.7; }
+.drawer-legal .drawer-brand:hover { opacity: 1; text-decoration: none; }
+.drawer-legal .drawer-brand:hover b { text-decoration: underline; }
+
+/* Dragging a crop or trim handle must never pan the page or swipe a drawer. */
+.crop-stage, .crop-frame, .crop-box, .trim-card, .trim-track { touch-action: none; overscroll-behavior: contain; }
+.edit-modal, .media-modal { overscroll-behavior: contain; }
