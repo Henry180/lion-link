@@ -2739,6 +2739,7 @@ body.dark .x-compose textarea { background:#000; color:#fff; }
 .terms-gate-card .consent-row input[type="checkbox"] {
   width: 18px;
   height: 18px;
+  min-height: 0; /* the sign-up form gives text inputs a 42px minimum on phones; a checkbox must not inherit it */
   margin: 1px 0 0;
   padding: 0;
   accent-color: var(--green, #007a3d);
@@ -2803,7 +2804,7 @@ body.terms-locked { overflow: hidden; }
 .comment-replying { display: block; margin-bottom: 2px; font-size: 12px; color: var(--muted, #5b6470); }
 .comment-replying b { font-weight: 600; color: inherit; }
 
-.drawer-legal .drawer-brand {
+.drawer-legal .drawer-credit {
   flex-basis: 100%;
   display: flex;
   align-items: baseline;
@@ -2816,11 +2817,40 @@ body.terms-locked { overflow: hidden; }
   opacity: 0.85;
   text-decoration: none;
 }
-.drawer-legal .drawer-brand b { font-weight: 700; letter-spacing: 0.02em; color: var(--green, #007a3d); }
-.drawer-legal .drawer-brand i { font-style: normal; font-size: 11px; opacity: 0.7; }
-.drawer-legal .drawer-brand:hover { opacity: 1; text-decoration: none; }
-.drawer-legal .drawer-brand:hover b { text-decoration: underline; }
+.drawer-legal .drawer-credit b { font-weight: 700; letter-spacing: 0.02em; color: var(--green, #007a3d); }
+.drawer-legal .drawer-credit i { font-style: normal; font-size: 11px; opacity: 0.7; }
+.drawer-legal .drawer-credit:hover { opacity: 1; text-decoration: none; }
+.drawer-legal .drawer-credit:hover b { text-decoration: underline; }
 
 /* Dragging a crop or trim handle must never pan the page or swipe a drawer. */
 .crop-stage, .crop-frame, .crop-box, .trim-card, .trim-track { touch-action: none; overscroll-behavior: contain; }
 .edit-modal, .media-modal { overscroll-behavior: contain; }
+
+
+/* =========================================================
+   MESSAGES: unread divider + scrolling that actually reaches the newest message
+   ========================================================= */
+.x-unread-divider {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  align-self: stretch;
+  margin: 4px 0 0;
+  color: var(--green, #007a3d);
+  font: 700 11px "DM Sans", sans-serif;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  scroll-margin-top: 12px;
+}
+.x-unread-divider::before,
+.x-unread-divider::after { content: ""; flex: 1; height: 1px; background: currentColor; opacity: 0.35; }
+/* Wide screens: the chat fills the shell and only the message list scrolls. */
+@media (min-width: 701px) {
+  .x-messages-shell { grid-template-rows: minmax(0, 1fr); }
+  .x-chat, .x-message-stream { min-height: 0; }
+}
+/* Phones: the page scrolls, so keep the newest message clear of the sticky compose bar and bottom nav. */
+@media (max-width: 700px) {
+  .x-unread-divider { scroll-margin-top: 110px; }
+  .x-message, .x-empty { scroll-margin-bottom: 180px; }
+}
