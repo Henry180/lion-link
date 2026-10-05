@@ -47,7 +47,7 @@ const linkify = value => esc(value).replace(/((?:https?:\/\/|www\.)[^\s<]+)/g, m
   const href = match.startsWith('http') ? match : `https://${match}`;
   return `<a href="${href}" target="_blank" rel="noopener noreferrer">${match}</a>`;
 });
-const initials = name => String(name||'?').split(' ').map(x=>x[0]).slice(0,2).join('').toUpperCase();
+const initials = name => String(name||'?').split(' ').filter(Boolean).map(x=>Array.from(x)[0]).slice(0,2).join('').toUpperCase() || '?'; // Array.from keeps an emoji whole instead of splitting it
 const when = date => { const s=Math.max(0,Math.floor((Date.now()-new Date(date))/1000)); return s<60?`${s}s`:s<3600?`${Math.floor(s/60)}m`:s<86400?`${Math.floor(s/3600)}h`:`${Math.floor(s/86400)}d`; };
 // Shown on a post's comment button. Real counts up to 10; beyond that just
 // "10+" so a busy post's comment count never becomes a heavy live counter.
@@ -1506,26 +1506,21 @@ if(e.target.id==='x-edit-attach'&&attachedMedia){
   const restore=()=>{if(restored||!me)return;restored=true;try{const state=JSON.parse(localStorage.getItem('lionLinkViewState')||'{}');if(state.view){show(state.view);if(state.view==='messages'&&state.chat)openChat(state.chat);}}catch{}};const baseIdentity=identity;identity=function(){baseIdentity();restore();};
   renderMessages(); if(token) loadChats().catch(()=>{}); /* Fast checking: a tiny request every 2s (Messages open) or 4s (elsewhere). The inbox and open chat
      reload only when something changed: a new message, a new unread count, or a read tick. */
-  let pulseSignature=null,lastFullLoad=0,lastNotifCount=null,lastInteraction=Date.now();
-  /* If nobody has touched the app for 2 minutes, check every 15s instead (saves server work); any touch wakes it at once. */
+  let lastChatMarker=null,lastNotifMarker=null,lastFullLoad=0,lastInteraction=Date.now();
+  /* Checking for news: the server answers from memory (no database work), and each check is one request through
+     the site's free Cloudflare Function quota, so the pace follows what you're doing:
+     3s in an open chat, 5s on the Messages screen, 10s elsewhere, 45s if nobody has touched the app for 2 minutes.
+     Any touch wakes it at once. */
   const wake=()=>{const wasIdle=Date.now()-lastInteraction>120000;lastInteraction=Date.now();if(wasIdle&&token&&me&&document.visibilityState==='visible')pulse().catch(()=>{});};
   ['pointerdown','keydown','scroll','touchstart'].forEach(name=>window.addEventListener(name,wake,{passive:true}));
-  const setNotificationBadge=n=>{const count=$('#notification-count');if(count){count.textContent=n;count.hidden=!n;}const mobile=document.querySelector('.bottom-nav [data-view="notifications"]');if(mobile){let badge=mobile.querySelector('.mobile-notification-count');if(n){if(!badge){badge=document.createElement('i');badge.className='mobile-notification-count';mobile.append(badge);}badge.textContent=n;}else if(badge)badge.remove();}};
   const pulse=async()=>{
     let result;
-    try{result=await api('/conversations/pulse');}
-    catch{/* pulse endpoint not available: fall back to a full reload, at most every 10s */if(Date.now()-lastFullLoad>10000){lastFullLoad=Date.now();return loadChats();}return;}
-    const items=result.items||[];
-    if(typeof result.notifications==='number'&&result.notifications!==lastNotifCount){
-      const firstCheck=lastNotifCount===null;lastNotifCount=result.notifications;
-      setNotificationBadge(result.notifications); /* the nav badge moves immediately… */
-      if(!firstCheck)Promise.resolve(loadNotifications?.()).finally(()=>setNotificationBadge(lastNotifCount)); /* …then the list catches up */
-    }
-    const signature=items.map(i=>`${i._id}:${i.unread}:${i.lastId}:${i.lastRead?1:0}`).sort().join('|');
-    if(signature===pulseSignature)return;
-    pulseSignature=signature;await loadChats();
+    try{result=await api('/conversations/pulse');}catch{result=null;}
+    if(!result||typeof result.chat!=='string'){/* server not updated yet or unreachable: fall back to a full reload, at most every 20s */if(Date.now()-lastFullLoad>20000){lastFullLoad=Date.now();return loadChats();}return;}
+    if(result.notif!==lastNotifMarker){lastNotifMarker=result.notif;await loadNotifications?.();} /* bell badge */
+    if(result.chat!==lastChatMarker){lastChatMarker=result.chat;await loadChats();} /* DM badges, inbox, open chat, read ticks */
   };
-  const pulseDelay=()=>Date.now()-lastInteraction>120000?15000:(document.querySelector('#messages-view.active')?2000:4000);
+  const pulseDelay=()=>{if(Date.now()-lastInteraction>120000)return 45000;if(!document.querySelector('#messages-view.active'))return 10000;return activeChat?3000:5000;};
   const pulseTick=async()=>{try{if(token&&me&&document.visibilityState==='visible')await pulse();}catch{}setTimeout(pulseTick,pulseDelay());};
   setTimeout(pulseTick,2000);
   document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible'&&token&&me)pulse().catch(()=>{});});
