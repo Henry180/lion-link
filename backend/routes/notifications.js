@@ -1,5 +1,6 @@
 const router = require("express").Router();
 const Notification = require("../models/Notification");
+const pulse = require("../utils/pulse");
 const auth = require("../middleware/auth");
 
 router.get("/", auth, async (req, res) => {
@@ -22,11 +23,13 @@ router.get("/", auth, async (req, res) => {
 
 router.post("/read", auth, async (req, res) => {
   await Notification.updateMany({ recipient: req.user.userId, read: false }, { read: true });
+  pulse.touch(req.user.userId, "notif");
   res.status(204).end();
 });
 
 router.post("/:id/read", auth, async (req, res) => {
   await Notification.updateOne({ _id: req.params.id, recipient: req.user.userId, read: false }, { read: true });
+  pulse.touch(req.user.userId, "notif");
   res.status(204).end();
 });
 
