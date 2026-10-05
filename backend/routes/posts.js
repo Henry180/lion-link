@@ -1,30 +1,44 @@
-const router = require("express").Router();
-const mongoose = require("mongoose");
-const Conversation = require("../models/Conversation");
+const express = require("express");
+const Post = require("../models/Post");
 const User = require("../models/User");
 const Notification = require("../models/Notification");
 const auth = require("../middleware/auth");
 
-// Same rules as posts.js: only a real https:// link, no characters that could
-// break out of an HTML attribute if ever rendered unescaped (defense in
-// depth — the frontend already escapes/validates these too, but the API
-// itself should never accept something so obviously wrong).
-// Returns: null (no media, which is fine), a clean {type,url} object, or
-// undefined (media was present but invalid).
-function cleanMessageMedia(item) {
-  if (item === undefined || item === null) return null;
-  const type = item.type;
-  const url = typeof item.url === "string" ? item.url.trim() : "";
-  if (!["image", "video", "audio"].includes(type)) return undefined;
-  if (!url || url.length > 2048 || !/^https:\/\/[^\s"'<>\\()]+$/i.test(url)) return undefined;
-  return { type, url };
+const router = express.Router();
+
+// =====================================================
+// INPUT LIMITS + VALIDATION
+// =====================================================
+// The browser enforces these limits (maxlength etc.), but anyone can call the
+// API directly and skip the browser entirely, so the server has to enforce
+// them too.
+const MAX_POST_LENGTH = 280;
+const MAX_COMMENT_LENGTH = 280;
+const MAX_MEDIA_ITEMS = 8;
+const ALLOWED_MEDIA_TYPES = new Set(["image", "video", "audio"]);
+
+// Returns a cleaned [{type, url}] list, or null if anything looks wrong.
+// URLs must be plain https links with no quotes, spaces, brackets or
+// backslashes: the feed builds HTML like <img src="URL">, so a URL such as
+//   x" onerror="stealTheLoginToken()
+// would otherwise run script in every visitor's browser (stored XSS).
+function cleanMedia(list) {
+  if (list === undefined || list === null) return [];
+  if (!Array.isArray(list) || list.length > MAX_MEDIA_ITEMS) return null;
+  const cleaned = [];
+  for (const item of list) {
+    const type = item && item.type;
+    const url = item && typeof item.url === "string" ? item.url.trim() : "";
+    if (!ALLOWED_MEDIA_TYPES.has(type)) return null;
+    if (!url || url.length > 2048 || !/^https:\/\/[^\s"'<>\\()]+$/i.test(url)) return null;
+    cleaned.push({ type, url });
+  }
+  return cleaned;
 }
 
-const MAX_MESSAGE_LENGTH = 1000; // matches the compose box's maxlength in frontend.js
-
-// Wraps an async route so an error (a malformed conversation id, for
-// example) always gets a real response instead of the request hanging
-// forever, which is what an uncaught rejection does to an Express 4 route.
+// Wraps an async route so an unexpected error (for example a malformed id)
+// gets a proper JSON response instead of leaving the request hanging forever,
+// which is what happens to an uncaught error inside an async Express 4 handler.
 const safe = handler => (req, res, next) =>
   Promise.resolve(handler(req, res, next)).catch(error => {
     if (error && error.name === "CastError") return res.status(404).json({ message: "Not found" });
@@ -32,164 +46,347 @@ const safe = handler => (req, res, next) =>
     res.status(500).json({ message: "Server error" });
   });
 
-const conversationFor = query => query.populate("members", "name username profileImage role lastActiveAt").sort({ updatedAt: -1 });
 
-const inboxItem = conversation => {
-  const item = conversation.toObject ? conversation.toObject() : conversation;
-  const last = item.messages?.at(-1);
-  return {
-    _id: item._id,
-    members: item.members,
-    createdAt: item.createdAt,
-    updatedAt: item.updatedAt,
-    lastMessage: last ? {
-      _id: last._id,
-      sender: last.sender,
-      text: last.text,
-      media: last.media ? { type: last.media.type } : null,
-      createdAt: last.createdAt,
-      readAt: last.readAt
-    } : null
-  };
-};
+// =====================================================
+// CREATE POST
+// =====================================================
 
-// Messages from the other person that the viewer has not opened yet.
-const unreadExpr = viewer => ({ $size: { $filter: {
-  input: { $ifNull: ["$messages", []] },
-  as: "m",
-  cond: { $and: [ { $ne: ["$$m.sender", viewer] }, { $eq: [{ $ifNull: ["$$m.readAt", null] }, null] } ] }
-} } });
+router.post("/", auth, async (req, res) => {
+  try {
+    const { text, media } = req.body;
+    const normalizedText = typeof text === "string" ? text.trim() : "";
+    const cleanedMedia = cleanMedia(media);
 
-// Per-conversation unread count for the inbox. The inbox itself only carries
-// the last message, so this is counted separately; the frontend shows it on
-// each DM and counts how many DMs have anything unread for the nav badge.
-async function unreadCounts(userId) {
-  const viewer = new mongoose.Types.ObjectId(String(userId));
-  const rows = await Conversation.aggregate([
-    { $match: { members: viewer } },
-    { $project: { unread: unreadExpr(viewer) } }
-  ]);
-  return new Map(rows.map(row => [String(row._id), row.unread]));
-}
+    if (cleanedMedia === null) {
+      return res.status(400).json({ message: "One of the attached photos or videos is not valid" });
+    }
+    if (normalizedText.length > MAX_POST_LENGTH) {
+      return res.status(400).json({ message: `Posts can be at most ${MAX_POST_LENGTH} characters` });
+    }
+    if (!normalizedText && cleanedMedia.length === 0) {
+      return res.status(400).json({
+        message: "Post cannot be empty"
+      });
+    }
 
-router.get("/", auth, safe(async (req, res) => {
-  const [conversations, unread] = await Promise.all([
-    conversationFor(
-      Conversation.find({ members: req.user.userId })
-        .select("members messages createdAt updatedAt")
-        .slice("messages", -1)
-    ),
-    unreadCounts(req.user.userId)
-  ]);
-  res.json({ conversations: conversations.map(conversation => ({ ...inboxItem(conversation), unreadCount: unread.get(String(conversation._id)) || 0 })) });
+    // A slow connection must never turn repeated taps into duplicate posts.
+    const recentDuplicate = await Post.findOne({
+      author: req.user.userId,
+      text: normalizedText,
+      createdAt: { $gte: new Date(Date.now() - 30 * 1000) }
+    }).populate("author", "name username profileImage");
+    if (recentDuplicate) return res.status(200).json({ message: "This post was already published", post: recentDuplicate, duplicate: true });
+
+    const post = await Post.create({
+      author: req.user.userId,
+      text: normalizedText,
+      media: cleanedMedia
+    });
+
+    const populatedPost = await Post.findById(post._id)
+    .populate("author", "name username profileImage role");
+
+    res.status(201).json({
+      message: "Post created successfully",
+      post: populatedPost
+    });
+
+  } catch (error) {
+    console.error("Create post error:", error);
+
+    res.status(500).json({
+      message: "Server error"
+    });
+  }
+});
+
+
+// =====================================================
+// GET FEED
+// =====================================================
+
+router.get("/", async (req, res) => {
+  try {
+    // An unbounded feed grows forever and re-sends old media on every reload.
+    // Clients can request a modest page; cap it server-side to protect Render
+    // bandwidth even if a client sends an excessive value.
+    const requestedLimit = Number.parseInt(req.query.limit, 10);
+    const limit = Number.isFinite(requestedLimit) ? Math.min(Math.max(requestedLimit, 1), 50) : 20;
+    const posts = await Post.find()
+      // reports and impressionUsers are internal bookkeeping — reports in
+      // particular names who reported a post and why, and has no business
+      // being sent to every visitor of the public feed. Excluding both also
+      // trims the payload on every single feed load.
+      .select("-reports -impressionUsers")
+      // Only the most recent 20 comments ship with the feed. A quiet post is
+      // unaffected; a post with thousands of comments during a busy moment
+      // no longer costs 100x more than an ordinary post to load for every
+      // single viewer. Nothing is deleted — this only limits what the feed
+      // response carries. The one visible side effect: the comment-count
+      // button on a post with more than 20 comments will show 20 rather
+      // than the true total, since the frontend counts what it received.
+      .select({ comments: { $slice: -20 } })
+      .sort({ createdAt: -1 })
+      .limit(limit)
+      .populate("author", "name username profileImage role")
+      .populate("comments.author", "name username profileImage role")
+      .lean();
+
+    // A short browser cache prevents repeat refreshes from immediately
+    // consuming backend egress while keeping the feed reasonably fresh.
+    res.set("Cache-Control", "public, max-age=30, stale-while-revalidate=60").json({
+      posts
+    });
+
+  } catch (error) {
+    console.error("Get posts error:", error);
+
+    res.status(500).json({
+      message: "Server error"
+    });
+  }
+});
+
+
+// =====================================================
+// LIKE POST
+// =====================================================
+
+router.post("/:id/like", auth, async (req, res) => {
+  try {
+    const userId = req.user.userId;
+
+    // Read-modify-write on the whole document let concurrent likes on a
+    // popular post silently overwrite each other (a real lost like), and
+    // forced MongoDB to rewrite every embedded comment on every single
+    // like. $addToSet / $pull apply atomically at the database level, so
+    // concurrent likes can no longer collide, and the write only touches
+    // the likes field rather than resaving the entire post.
+    const current = await Post.findById(req.params.id).select("likes author");
+    if (!current) {
+      return res.status(404).json({
+        message: "Post not found"
+      });
+    }
+
+    const alreadyLiked = current.likes.some(id => id.toString() === userId);
+
+    const updated = await Post.findByIdAndUpdate(
+      req.params.id,
+      alreadyLiked ? { $pull: { likes: userId } } : { $addToSet: { likes: userId } },
+      { new: true }
+    ).select("likes author");
+
+    if (!alreadyLiked && updated.author.toString() !== userId) {
+      await Notification.create({ recipient: updated.author, actor: userId, type: "like", post: updated._id });
+    }
+
+    res.json({
+      message: "Post liked",
+      likes: updated.likes.length,
+      liked: !alreadyLiked
+    });
+
+  } catch (error) {
+    console.error("Like post error:", error);
+
+    res.status(500).json({
+      message: "Server error"
+    });
+  }
+});
+
+router.patch("/:id", auth, safe(async (req, res) => {
+  const post = await Post.findById(req.params.id);
+  if (!post) return res.status(404).json({ message: "Post not found" });
+  if (post.author.toString() !== req.user.userId) return res.status(403).json({ message: "You can only edit your own posts" });
+  if (Date.now() - post.createdAt.getTime() > 30 * 60 * 1000) return res.status(403).json({ message: "Posts can only be edited within 30 minutes" });
+  const editedText = String(req.body.text || "").trim();
+  if (editedText.length > MAX_POST_LENGTH) return res.status(400).json({ message: `Posts can be at most ${MAX_POST_LENGTH} characters` });
+  post.text = editedText;
+  await post.save();
+  res.json({ post });
 }));
 
-// Tiny, cheap status check the app calls every couple of seconds. It returns
-// no message content, only enough to tell whether anything changed (a new
-// message, a new unread count, or the last message being read). The app
-// reloads the inbox / open chat only when this changes. It also carries the
-// unread notification count so the bell badge updates as fast as the DMs do.
-router.get("/pulse", auth, safe(async (req, res) => {
-  const viewer = new mongoose.Types.ObjectId(String(req.user.userId));
-  const [rows, notifications] = await Promise.all([
-    Conversation.aggregate([
-      { $match: { members: viewer } },
-      { $project: { last: { $arrayElemAt: ["$messages", -1] }, unread: unreadExpr(viewer) } },
-      { $project: { unread: 1, lastId: "$last._id", lastRead: { $ne: [{ $ifNull: ["$last.readAt", null] }, null] } } }
-    ]),
-    // Unread bell notifications (likes, comments, follows). DMs have their own badge.
-    Notification.countDocuments({ recipient: viewer, read: false, type: { $ne: "message" } })
-  ]);
-  res.set("Cache-Control", "no-store").json({
-    items: rows.map(row => ({ _id: row._id, unread: row.unread, lastId: row.lastId || null, lastRead: !!row.lastRead })),
-    notifications
-  });
+router.post("/:id/impression", auth, safe(async (req, res) => {
+  const post = await Post.findById(req.params.id).select("impressions impressionUsers");
+  if (!post) return res.status(404).json({ message: "Post not found" });
+  if (!post.impressionUsers.some(id => id.toString() === req.user.userId)) {
+    post.impressionUsers.push(req.user.userId);
+    post.impressions += 1;
+    await post.save();
+  }
+  res.json({ impressions: post.impressions });
 }));
 
-router.post("/", auth, safe(async (req, res) => {
-  const other = await User.findOne({ username: String(req.body.username || "").replace(/^@/, "") });
-  if (!other) return res.status(404).json({ message: "User not found" });
-  let conversation = await Conversation.findOne({ members: { $all: [req.user.userId, other._id] , $size: 2 } });
-  const created = !conversation;
-  if (!conversation) conversation = await Conversation.create({ members: [req.user.userId, other._id] });
-  await conversation.populate("members", "name username profileImage role lastActiveAt");
-  res.status(created ? 201 : 200).json({ conversation: inboxItem(conversation) });
+router.post("/:id/report", auth, safe(async (req, res) => {
+  const post = await Post.findById(req.params.id);
+  if (!post) return res.status(404).json({ message: "Post not found" });
+  if (post.author.toString() === req.user.userId) return res.status(400).json({ message: "You cannot report your own post" });
+  if (post.reports.some(report => report.reporter?.toString() === req.user.userId)) return res.status(409).json({ message: "You have already reported this post" });
+  post.reports.push({ reporter: req.user.userId, reason: String(req.body.reason || "").trim() });
+  await post.save();
+  res.status(201).json({ message: "Report submitted for admin review" });
 }));
 
-router.get("/:id", auth, safe(async (req, res) => {
-  const requestedLimit = Number.parseInt(req.query.limit, 10);
-  const limit = Number.isFinite(requestedLimit) ? Math.min(Math.max(requestedLimit, 1), 100) : 50;
-  const conversation = await conversationFor(
-    Conversation.findOne({ _id: req.params.id, members: req.user.userId })
-      .select("members messages createdAt updatedAt")
-      .slice("messages", -limit)
-  );
-  if (!conversation) return res.status(404).json({ message: "Conversation not found" });
-  res.json({ conversation });
+router.get("/reports", auth, safe(async (req, res) => {
+  if (req.user.role !== "admin") return res.status(403).json({ message: "Admin access required" });
+  const posts = await Post.find({ "reports.0": { $exists: true } }).populate("author", "name username").populate("reports.reporter", "name username").sort({ updatedAt: -1 });
+  res.json({ posts });
 }));
 
-router.post("/:id/read", auth, safe(async (req, res) => {
-  const conversation = await Conversation.findOne({ _id: req.params.id, members: req.user.userId });
-  if (!conversation) return res.status(404).json({ message: "Conversation not found" });
-  const now = new Date();
-  let changed = false;
-  conversation.messages.forEach(message => {
-    if (String(message.sender) !== String(req.user.userId) && !message.readAt) { message.readAt = now; changed = true; }
-  });
-  if (changed) await conversation.save();
-  await Notification.updateMany({ recipient: req.user.userId, conversation: conversation._id, type: "message", read: false }, { read: true });
-  res.json({ readAt: now });
+// One-time (and safely re-runnable) fix-up, triggered from the admin panel
+// instead of Render's Shell — Shell requires a paid plan this account can't
+// upgrade to right now. Recalculates commentsCount for every post from its
+// real comment count, fixing posts created before that field existed.
+router.post("/admin/backfill-comment-counts", auth, safe(async (req, res) => {
+  if (req.user.role !== "admin") return res.status(403).json({ message: "Admin access required" });
+  try {
+    const result = await Post.updateMany(
+      {},
+      [{ $set: { commentsCount: { $size: { $ifNull: ["$comments", []] } } } }]
+    );
+    res.json({ message: `Updated ${result.modifiedCount} of ${result.matchedCount} posts.` });
+  } catch (error) {
+    console.error("Backfill comment counts error:", error);
+    res.status(500).json({ message: "Server error" });
+  }
 }));
 
-router.post("/:id/messages", auth, safe(async (req, res) => {
-  const conversation = await Conversation.findOne({ _id: req.params.id, members: req.user.userId });
-  if (!conversation) return res.status(404).json({ message: "Conversation not found" });
+router.post("/:id/comments", auth, safe(async (req, res) => {
+  const post = await Post.findById(req.params.id);
   const text = String(req.body.text || "").trim();
-  const media = cleanMessageMedia(req.body.media);
-  if (media === undefined) return res.status(400).json({ message: "That attachment isn't valid" });
-  if (text.length > MAX_MESSAGE_LENGTH) return res.status(400).json({ message: `Messages can be at most ${MAX_MESSAGE_LENGTH} characters` });
-  if (!text && !media) return res.status(400).json({ message: "Write a message or attach an image, video, or voice note" });
-  conversation.messages.push({ sender: req.user.userId, text, media, deliveredAt: new Date() });
-  await conversation.save();
-  const recipient = conversation.members.find(member => String(member) !== String(req.user.userId));
-  if (recipient) await Notification.create({ recipient, actor: req.user.userId, type: "message", conversation: conversation._id });
-  res.status(201).json({ message: conversation.messages.at(-1) });
+  if (!post) return res.status(404).json({ message: "Post not found" });
+  if (!text) return res.status(400).json({ message: "Reply cannot be empty" });
+  if (text.length > MAX_COMMENT_LENGTH) return res.status(400).json({ message: `Replies can be at most ${MAX_COMMENT_LENGTH} characters` });
+  // replyTo must point at a real comment on this same post, never arbitrary text.
+  let replyTo = null;
+  if (req.body.replyTo) { try { if (post.comments.id(req.body.replyTo)) replyTo = req.body.replyTo; } catch { replyTo = null; } }
+  post.comments.push({ author: req.user.userId, text, replyTo });
+  post.commentsCount = post.comments.length; // the true total, not just the page the feed loads
+  await post.save();
+  if (post.author.toString() !== req.user.userId) await Notification.create({ recipient: post.author, actor: req.user.userId, type: "comment", post: post._id, commentId: post.comments.at(-1)._id.toString() });
+  res.status(201).json({ comment: post.comments.at(-1) });
 }));
 
-router.post("/:id/messages/:messageId/react", auth, safe(async (req, res) => {
-  const conversation = await Conversation.findOne({ _id: req.params.id, members: req.user.userId });
-  if (!conversation) return res.status(404).json({ message: "Conversation not found" });
-  const message = conversation.messages.id(req.params.messageId);
-  if (!message) return res.status(404).json({ message: "Message not found" });
-  const existing = message.reactions.some(user => String(user) === String(req.user.userId));
-  message.reactions = existing ? message.reactions.filter(user => String(user) !== String(req.user.userId)) : [...message.reactions, req.user.userId];
-  await conversation.save(); res.json({ reacted: !existing, reactions: message.reactions.length });
-}));
-
-router.patch("/:id/messages/:messageId", auth, safe(async (req, res) => {
-  const conversation = await Conversation.findOne({ _id: req.params.id, members: req.user.userId });
-  if (!conversation) return res.status(404).json({ message: "Conversation not found" });
-  const message = conversation.messages.id(req.params.messageId);
-  if (!message) return res.status(404).json({ message: "Message not found" });
-  if (String(message.sender) !== String(req.user.userId)) return res.status(403).json({ message: "You can only edit your own messages" });
-  if (Date.now() - new Date(message.createdAt).getTime() > 15 * 60 * 1000) return res.status(403).json({ message: "Messages can only be edited within 15 minutes" });
+// Comments and replies can be edited for 15 minutes by their author.
+router.patch("/:id/comments/:commentId", auth, safe(async (req, res) => {
+  const post = await Post.findById(req.params.id);
+  if (!post) return res.status(404).json({ message: "Post not found" });
+  const comment = post.comments.id(req.params.commentId);
+  if (!comment) return res.status(404).json({ message: "Comment not found" });
+  if (comment.author.toString() !== req.user.userId) return res.status(403).json({ message: "You can only edit your own comments" });
+  if (!comment.createdAt || Date.now() - comment.createdAt.getTime() > 15 * 60 * 1000) return res.status(403).json({ message: "Comments can only be edited within 15 minutes" });
   const text = String(req.body.text || "").trim();
-  if (!text) return res.status(400).json({ message: "Message cannot be empty" });
-  if (text.length > MAX_MESSAGE_LENGTH) return res.status(400).json({ message: `Messages can be at most ${MAX_MESSAGE_LENGTH} characters` });
-  message.text = text;
-  message.editedAt = new Date();
-  await conversation.save();
-  res.json({ message });
+  if (!text) return res.status(400).json({ message: "Comment cannot be empty" });
+  if (text.length > MAX_COMMENT_LENGTH) return res.status(400).json({ message: `Comments can be at most ${MAX_COMMENT_LENGTH} characters` });
+  comment.text = text;
+  await post.save();
+  res.json({ comment });
 }));
 
-router.delete("/:id/messages/:messageId", auth, safe(async (req, res) => {
-  const conversation = await Conversation.findOne({ _id: req.params.id, members: req.user.userId });
-  if (!conversation) return res.status(404).json({ message: "Conversation not found" });
-  const message = conversation.messages.id(req.params.messageId);
-  if (!message) return res.status(404).json({ message: "Message not found" });
-  if (String(message.sender) !== String(req.user.userId)) return res.status(403).json({ message: "You can only delete your own messages" });
-  message.deleteOne();
-  await conversation.save();
-  res.status(204).end();
+// LIKE OR UNLIKE A COMMENT
+router.post("/:id/comments/:commentId/like", auth, safe(async (req, res) => {
+  const post = await Post.findById(req.params.id);
+  if (!post) return res.status(404).json({ message: "Post not found" });
+  const comment = post.comments.id(req.params.commentId);
+  if (!comment) return res.status(404).json({ message: "Comment not found" });
+  const userId = req.user.userId;
+  const existing = comment.likes.some(id => id.toString() === userId);
+  comment.likes = existing ? comment.likes.filter(id => id.toString() !== userId) : [...comment.likes, userId];
+  await post.save();
+  res.json({ liked: !existing, likes: comment.likes.length });
 }));
-module.exports=router;
+
+router.delete("/:id/comments/:commentId", auth, safe(async (req, res) => {
+  const post = await Post.findById(req.params.id);
+  if (!post) return res.status(404).json({ message: "Post not found" });
+  const comment = post.comments.id(req.params.commentId);
+  if (!comment) return res.status(404).json({ message: "Reply not found" });
+  if (comment.author.toString() !== req.user.userId) return res.status(403).json({ message: "Not permitted" });
+  comment.deleteOne(); post.commentsCount = post.comments.length; await post.save(); res.status(204).end();
+}));
+
+
+// =====================================================
+// GET SINGLE POST
+// =====================================================
+// Used for direct/shared post links (frontend route /post/:id) and by the
+// Cloudflare Pages Functions that build per-post preview metadata for
+// search engines and link-preview bots. No auth required, matching the
+// public feed above — a shared post link should open the same way the
+// feed already does for anyone who already has the app open.
+router.get("/:id", async (req, res) => {
+  try {
+    const post = await Post.findById(req.params.id)
+      .select("-reports -impressionUsers")
+      .populate("author", "name username profileImage role")
+      .populate("comments.author", "name username profileImage role")
+      .lean();
+
+    if (!post) {
+      return res.status(404).json({ message: "Post not found" });
+    }
+
+    res.set("Cache-Control", "public, max-age=30, stale-while-revalidate=60").json({ post });
+
+  } catch (error) {
+    // An invalid/malformed id (e.g. a bot probing random paths) throws a
+    // Mongoose CastError rather than a real "not found" — treat it the
+    // same way instead of surfacing a 500 for what is really a 404.
+    if (error.name === "CastError") {
+      return res.status(404).json({ message: "Post not found" });
+    }
+    console.error("Get post error:", error);
+    res.status(500).json({
+      message: "Server error"
+    });
+  }
+});
+
+
+// =====================================================
+// DELETE POST
+// =====================================================
+
+router.delete("/:id", auth, async (req, res) => {
+  try {
+    const post = await Post.findById(req.params.id);
+
+    if (!post) {
+      return res.status(404).json({
+        message: "Post not found"
+      });
+    }
+
+    // Only the person who created the post can delete it
+    if (post.author.toString() !== req.user.userId && req.user.role !== "admin") {
+      return res.status(403).json({
+        message: "You cannot delete this post"
+      });
+    }
+
+    await post.deleteOne();
+
+    res.json({
+      message: "Post deleted successfully"
+    });
+
+  } catch (error) {
+    console.error("Delete post error:", error);
+
+    res.status(500).json({
+      message: "Server error"
+    });
+  }
+});
+
+
+// Posts made before commentsCount was kept up to date show 0 comments. Repair them
+// once, quietly, whenever the server starts (it only touches posts that need it).
+Post.updateMany(
+  { commentsCount: { $in: [0, null] }, "comments.0": { $exists: true } },
+  [{ $set: { commentsCount: { $size: { $ifNull: ["$comments", []] } } } }]
+).catch(() => {});
+
+module.exports = router;
