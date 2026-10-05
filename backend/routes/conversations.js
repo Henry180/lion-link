@@ -1,5 +1,6 @@
 const router = require("express").Router();
 const mongoose = require("mongoose");
+const pulse = require("../utils/pulse");
 const Conversation = require("../models/Conversation");
 const User = require("../models/User");
 const Notification = require("../models/Notification");
@@ -84,27 +85,13 @@ router.get("/", auth, safe(async (req, res) => {
   res.json({ conversations: conversations.map(conversation => ({ ...inboxItem(conversation), unreadCount: unread.get(String(conversation._id)) || 0 })) });
 }));
 
-// Tiny, cheap status check the app calls every couple of seconds. It returns
-// no message content, only enough to tell whether anything changed (a new
-// message, a new unread count, or the last message being read). The app
-// reloads the inbox / open chat only when this changes. It also carries the
-// unread notification count so the bell badge updates as fast as the DMs do.
-router.get("/pulse", auth, safe(async (req, res) => {
-  const viewer = new mongoose.Types.ObjectId(String(req.user.userId));
-  const [rows, notifications] = await Promise.all([
-    Conversation.aggregate([
-      { $match: { members: viewer } },
-      { $project: { last: { $arrayElemAt: ["$messages", -1] }, unread: unreadExpr(viewer) } },
-      { $project: { unread: 1, lastId: "$last._id", lastRead: { $ne: [{ $ifNull: ["$last.readAt", null] }, null] } } }
-    ]),
-    // Unread bell notifications (likes, comments, follows). DMs have their own badge.
-    Notification.countDocuments({ recipient: viewer, read: false, type: { $ne: "message" } })
-  ]);
-  res.set("Cache-Control", "no-store").json({
-    items: rows.map(row => ({ _id: row._id, unread: row.unread, lastId: row.lastId || null, lastRead: !!row.lastRead })),
-    notifications
-  });
-}));
+// Tiny status check the app calls every few seconds. It answers from memory (see
+// utils/pulse.js), so it costs the database nothing. It returns two change markers:
+// one for messages / read ticks and one for notifications. The app reloads the inbox
+// or the bell only when a marker is different from last time.
+router.get("/pulse", auth, (req, res) => {
+  res.set("Cache-Control", "no-store").json(pulse.snapshot(req.user.userId));
+});
 
 router.post("/", auth, safe(async (req, res) => {
   const other = await User.findOne({ username: String(req.body.username || "").replace(/^@/, "") });
