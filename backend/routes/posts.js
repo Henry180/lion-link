@@ -382,11 +382,4 @@ router.delete("/:id", auth, async (req, res) => {
 });
 
 
-// Posts made before commentsCount was kept up to date show 0 comments. Repair them
-// once, quietly, whenever the server starts (it only touches posts that need it).
-Post.updateMany(
-  { commentsCount: { $in: [0, null] }, "comments.0": { $exists: true } },
-  [{ $set: { commentsCount: { $size: { $ifNull: ["$comments", []] } } } }]
-).catch(() => {});
-
 module.exports = router;
