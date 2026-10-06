@@ -86,6 +86,26 @@ postMarkup = function(post){
 };
 function renderPosts(){const all=posts.map(postMarkup).join('')||'<p class="empty-profile">No posts yet.</p>';$('#post-feed').innerHTML=all;const username=(viewedProfile||me)?.username;$('#profile-posts').innerHTML=posts.filter(p=>p.author?.username===username).map(postMarkup).join('')||'<p class="empty-profile">No posts yet.</p>';}
 async function loadPosts(){posts=(await api('/posts')).posts;renderPosts();}
+// Refresh ONE post (its likes, comments, counts) instead of reloading the whole feed.
+// Used when you open a post from a notification, so you see what actually happened.
+const postRefreshes = new Map();
+async function refreshPost(postId) {
+  if (postRefreshes.has(postId)) return postRefreshes.get(postId);
+  const job = (async () => {
+    try {
+      const { post } = await api('/posts/' + encodeURIComponent(postId) + '?fresh=' + Date.now());
+      const index = posts.findIndex(item => item._id === post._id);
+      if (index > -1) posts[index] = post; else posts.unshift(post);
+      renderPosts();
+      return post;
+    } catch (error) {
+      if (!posts.some(item => item._id === postId)) toast('That post is no longer available.');
+      return null;
+    }
+  })();
+  postRefreshes.set(postId, job);
+  try { return await job; } finally { postRefreshes.delete(postId); }
+}
 function renderProfile(user){if(!user)return;const own=user.username===me?.username;viewedProfile=own?null:user;$('#profile-name').textContent=user.name;$('#profile-handle').textContent='@'+user.username;const avatar=$('.profile-avatar');avatar.textContent=user.profileImage?'':initials(user.name);avatar.style.backgroundImage=user.profileImage?`url(${safeUrl(user.profileImage)})`:'';avatar.style.backgroundSize='cover';avatar.dataset.profileAvatar=user.username;avatar.classList.toggle('has-story',stories.some(s=>s.author?.username===user.username));$('#profile-cover').style.backgroundImage=user.coverImage?`url(${safeUrl(user.coverImage)})`:'';$('.profile-bio').textContent=user.bio||'UNN student · Sharing campus moments and meeting new people.';let activity=$('#profile-activity');if(!activity){activity=document.createElement('p');activity.id='profile-activity';activity.className='profile-activity';$('#profile-handle').insertAdjacentElement('afterend',activity);}activity.textContent=own||user.isActiveNow?'● Active now':user.lastActiveAt?`Last active ${when(user.lastActiveAt)} ago`:'';activity.hidden=!activity.textContent;document.querySelectorAll('.profile-stats b')[0].textContent=user.following?.length??user.following??0;document.querySelectorAll('.profile-stats b')[1].textContent=user.followers?.length??user.followers??0;$('.edit-profile').hidden=!own;$('.message-profile').hidden=own;const follow=$('.follow-profile');follow.hidden=own;follow.textContent=user.isFollowing?'Following':'Follow';follow.classList.toggle('following',!!user.isFollowing);$('.profile-story-add').hidden=!own;renderPosts();}
 const renderProfileBase = renderProfile;
 renderProfile = function(user){renderProfileBase(user);if(user)$('#profile-name').innerHTML=`${esc(user.name)}${verifiedBadge(user)}`;};
@@ -193,7 +213,7 @@ $('#announcement-media-picker')?.addEventListener('click',()=>$('#announcement-m
 $('#submit-post').onclick=async()=>{const text=$('#post-text').value.trim();if(!text&&!selectedMedia.length)return;try{await api('/posts',{method:'POST',body:JSON.stringify({text,media:selectedMedia})});$('#post-text').value='';selectedMedia=[];$('#media-preview').hidden=true;await loadPosts();toast('Your post is live!')}catch(error){toast(error.message)}};
 $('#open-post').onclick=()=>{show('feed');$('#post-text').focus()};$('#refresh-feed').onclick=()=>loadPosts().catch(error=>toast(error.message));$('#open-admin').onclick=()=>show('admin');$('.edit-profile').onclick=()=>{$('#edit-name').value=me.name;$('#edit-bio').value=me.bio||'';$('#edit-modal').hidden=false};$('#edit-profile-form').onsubmit=async e=>{e.preventDefault();try{const avatar=$('#edit-avatar').files[0],cover=$('#edit-cover').files[0];me=(await api('/auth/me',{method:'PATCH',body:JSON.stringify({name:$('#edit-name').value,bio:$('#edit-bio').value,profileImage:avatar?await fileData(avatar).then(x=>x.url):me.profileImage,coverImage:cover?await fileData(cover).then(x=>x.url):me.coverImage})})).user;identity();$('#edit-modal').hidden=true;toast('Profile updated.')}catch(error){toast(error.message)}};$('#help-link').onclick=()=>toast('For help, contact a Lion Link administrator.');document.querySelectorAll('[data-close-modal]').forEach(b=>b.onclick=()=>$('#'+b.dataset.closeModal).hidden=true);
 $('#announcement-form').onsubmit=async event=>{event.preventDefault();try{await api('/announcements',{method:'POST',body:JSON.stringify({title:$('#announcement-title').value,body:$('#announcement-body').value})});event.target.reset();await loadAnnouncements();toast('Announcement published.')}catch(error){toast(error.message)}};
-document.addEventListener('click',async event=>{const button=event.target.closest('[data-view]');if(button){if(button.dataset.view==='profile'){viewedProfile=null;renderProfile(me);}return show(button.dataset.view);}const d=event.target.dataset;if(d.like){const post=posts.find(p=>p._id===d.like),index=post.likes.findIndex(id=>(id._id||id).toString()===me.id);index<0?post.likes.push(me.id):post.likes.splice(index,1);renderPosts();try{await api(`/posts/${d.like}/like`,{method:'POST'})}catch(error){index<0?post.likes.pop():post.likes.push(me.id);renderPosts();toast(error.message)}}if(d.follow)try{const result=await api(`/users/${d.follow}/follow`,{method:'POST'});event.target.textContent=result.following?'Following':'Follow';event.target.classList.toggle('following',result.following);toast(result.following?'Following user':'Unfollowed user')}catch(error){toast(error.message)}if(d.commentToggle){const box=$('#comments-'+d.commentToggle);box.hidden=!box.hidden}if(d.deletePost&&confirm('Delete this post?'))try{await api('/posts/'+d.deletePost,{method:'DELETE'});loadPosts()}catch(error){toast(error.message)}if(d.editPost){const post=posts.find(p=>p._id===d.editPost),text=prompt('Edit post',post.text);if(text!==null)try{await api('/posts/'+d.editPost,{method:'PATCH',body:JSON.stringify({text})});loadPosts()}catch(error){toast(error.message)}}if(d.removeAnnouncement&&confirm('Remove this announcement?'))try{await api('/announcements/'+d.removeAnnouncement,{method:'DELETE'});loadAnnouncements()}catch(error){toast(error.message)}if(d.gallery){const post=posts.find(p=>p._id===d.gallery);$('#media-modal-content').innerHTML=post.media.map(m=>m.type==='video'?`<div class="modal-media"><video controls src="${safeUrl(m.url)}"></video></div>`:`<div class="modal-media"><img src="${safeUrl(m.url)}"></div>`).join('');$('#media-modal').hidden=false}if(d.chat)openChat(d.chat);if(d.user){if(d.user===me.username)return show('profile');try{const {conversation}=await api('/conversations',{method:'POST',body:JSON.stringify({username:d.user})});await loadChats();show('messages');openChat(conversation._id)}catch(error){toast(error.message)}}});
+document.addEventListener('click',async event=>{const button=event.target.closest('[data-view]');if(button){if(button.dataset.view==='profile'){viewedProfile=null;renderProfile(me);}return show(button.dataset.view);}const d=event.target.dataset;if(d.like){const post=posts.find(p=>p._id===d.like),index=post.likes.findIndex(id=>(id._id||id).toString()===me.id);index<0?post.likes.push(me.id):post.likes.splice(index,1);renderPosts();try{await api(`/posts/${d.like}/like`,{method:'POST'})}catch(error){index<0?post.likes.pop():post.likes.push(me.id);renderPosts();toast(error.message)}}if(d.follow)try{const result=await api(`/users/${d.follow}/follow`,{method:'POST'});event.target.textContent=result.following?'Following':'Follow';event.target.classList.toggle('following',result.following);toast(result.following?'Following user':'Unfollowed user')}catch(error){toast(error.message)}if(d.commentToggle){const box=$('#comments-'+d.commentToggle);box.hidden=!box.hidden}if(d.deletePost&&confirm('Delete this post?'))try{await api('/posts/'+d.deletePost,{method:'DELETE'});posts=posts.filter(p=>p._id!==d.deletePost);renderPosts()}catch(error){toast(error.message)}if(d.editPost){const post=posts.find(p=>p._id===d.editPost),text=prompt('Edit post',post.text);if(text!==null)try{const edited=await api('/posts/'+d.editPost,{method:'PATCH',body:JSON.stringify({text})});post.text=edited?.post?.text??text;renderPosts()}catch(error){toast(error.message)}}if(d.removeAnnouncement&&confirm('Remove this announcement?'))try{await api('/announcements/'+d.removeAnnouncement,{method:'DELETE'});loadAnnouncements()}catch(error){toast(error.message)}if(d.gallery){const post=posts.find(p=>p._id===d.gallery);$('#media-modal-content').innerHTML=post.media.map(m=>m.type==='video'?`<div class="modal-media"><video controls src="${safeUrl(m.url)}"></video></div>`:`<div class="modal-media"><img src="${safeUrl(m.url)}"></div>`).join('');$('#media-modal').hidden=false}if(d.chat)openChat(d.chat);if(d.user){if(d.user===me.username)return show('profile');try{const {conversation}=await api('/conversations',{method:'POST',body:JSON.stringify({username:d.user})});await loadChats();show('messages');openChat(conversation._id)}catch(error){toast(error.message)}}});
 document.addEventListener('submit',async event=>{const id=event.target.dataset.commentForm;if(!id)return;event.preventDefault();try{await api(`/posts/${id}/comments`,{method:'POST',body:JSON.stringify({text:event.target.elements[0].value,replyTo:event.target.dataset.replyTo||null})});await loadPosts({silent:true});const box=$('#comments-'+id);if(box)box.hidden=false;}catch(error){toast(error.message)}});
 (async()=>{loginMode();if(!token)return;try{const result=await api('/auth/me');me=result.user;$('#login-overlay').classList.add('hidden');identity();await Promise.all([loadPosts(),loadAnnouncements(),loadChats()]);}catch(error){if(error.status===401||error.status===403){localStorage.removeItem('lionLinkToken');token=null;$('#login-overlay').classList.remove('hidden');}else{toast('Unable to reconnect. Your signed-in session is still saved.');}}})();
 
@@ -562,7 +582,7 @@ openChat = function(id) {
     const follow = event.target.closest('[data-follow]');
     if (follow) { event.preventDefault(); event.stopImmediatePropagation(); if (follow.dataset.followBusy) return; follow.dataset.followBusy = '1'; follow.disabled = true; try { const result = await api(`/users/${encodeURIComponent(follow.dataset.follow)}/follow`, { method:'POST' }); followStates.set(follow.dataset.follow, result.following); if(result.following) followedUsernames.add(follow.dataset.follow); else followedUsernames.delete(follow.dataset.follow); renderPosts(); if (viewedProfile?.username === follow.dataset.follow) { viewedProfile.isFollowing=result.following; viewedProfile.followers=result.followers; renderProfile(viewedProfile); } } catch(error) { toast(error.message); } finally { delete follow.dataset.followBusy; follow.disabled=false; } return; }
     const item = event.target.closest('[data-notification-type]');
-    if (item) { event.preventDefault(); event.stopImmediatePropagation(); if (!item.classList.contains('read')) { await api(`/notifications/${item.dataset.notificationId}/read`, { method:'POST' }).catch(()=>{}); item.classList.remove('unread'); item.classList.add('read'); loadNotifications(); } if (item.dataset.notificationType === 'follow') return openProfile(item.dataset.notificationActor); if (item.dataset.notificationPost) { show('feed'); const box = $('#comments-'+item.dataset.notificationPost); if (box) box.hidden=false; $('#post-'+item.dataset.notificationPost)?.scrollIntoView({behavior:'smooth',block:'center'}); } else if (item.dataset.notificationType === 'message') { await loadChats(); show('messages'); openChat(item.dataset.notificationConversation); } return; }
+    if (item) { event.preventDefault(); event.stopImmediatePropagation(); if (!item.classList.contains('read')) { await api(`/notifications/${item.dataset.notificationId}/read`, { method:'POST' }).catch(()=>{}); item.classList.remove('unread'); item.classList.add('read'); loadNotifications(); } if (item.dataset.notificationType === 'follow') return openProfile(item.dataset.notificationActor); if (item.dataset.notificationPost) { const postId = item.dataset.notificationPost; show('feed'); $('#post-'+postId)?.scrollIntoView({behavior:'smooth',block:'center'}); await refreshPost(postId); /* fetch just this post so its likes and comments are current */ const box = $('#comments-'+postId); if (box) box.hidden=false; requestAnimationFrame(() => { const commentId = item.dataset.notificationComment; (commentId ? $('#comment-'+commentId) : $('#post-'+postId))?.scrollIntoView({behavior:'smooth',block:'center'}); }); } else if (item.dataset.notificationType === 'message') { await loadChats(); show('messages'); openChat(item.dataset.notificationConversation); } return; }
     const like = event.target.closest('[data-story-like]'); if (like) { const story = stories.find(s=>s._id===like.dataset.storyLike); const previous = [...(story.likes || [])], hasLiked = previous.some(id => String(id._id || id) === String(me.id)); story.likes = hasLiked ? previous.filter(id => String(id._id || id) !== String(me.id)) : [...previous, me.id]; openStory(story); try { const result=await api(`/stories/${story._id}/like`,{method:'POST'}); story.likes = result.liked ? [...previous.filter(id => String(id._id || id) !== String(me.id)), me.id] : previous.filter(id => String(id._id || id) !== String(me.id)); } catch(error){story.likes=previous;openStory(story);toast(error.message);} return; }
     const comment = event.target.closest('[data-story-comment]'); if (comment) { const story=stories.find(s=>s._id===comment.dataset.storyComment); const text=prompt('Write a comment. It will open a direct message with the poster.'); if (!text) return; try { await api(`/stories/${story._id}/comments`,{method:'POST',body:JSON.stringify({text})}); const {conversation}=await api('/conversations',{method:'POST',body:JSON.stringify({username:story.author.username})}); await loadChats(); show('messages'); openChat(conversation._id); } catch(error){toast(error.message);} return; }
     const step=event.target.closest('[data-story-step]'); if(step){const [id,direction]=step.dataset.storyStep.split(':');const current=stories.find(s=>s._id===id),group=stories.filter(s=>s.author?.username===current.author?.username).sort((a,b)=>new Date(a.createdAt)-new Date(b.createdAt)),index=group.findIndex(s=>s._id===id);openStory(group[index+(direction==='next'?1:-1)]);return;}
@@ -776,9 +796,10 @@ $('#quick-post-form').onsubmit = async event => {
   quickPosting = true;
   const submit = event.target.querySelector('[type="submit"], .small-post'); submit.disabled = true;
   try {
-    await api('/posts', { method: 'POST', body: JSON.stringify({ text, media }) });
+    const { post } = await api('/posts', { method: 'POST', body: JSON.stringify({ text, media }) });
     event.target.reset(); quickMedia = []; renderQuickMedia();
-    $('#quick-post-modal').hidden = true; await loadPosts(); toast('Your post is live!');
+    if (post) { if (!posts.some(item => item._id === post._id)) posts.unshift(post); renderPosts(); } else await loadPosts();
+    $('#quick-post-modal').hidden = true; toast('Your post is live!');
   } catch (error) { toast(error.message); }
   finally { quickPosting = false; submit.disabled = mediaUploading(quickMedia); }
 };
@@ -820,7 +841,7 @@ loadNotifications = async function() {
 document.addEventListener('click', async event => {
   const item = event.target.closest('[data-notification-type]'); if (!item) return;
   const postId = item.dataset.notificationPost, conversationId = item.dataset.notificationConversation;
-  if (postId) { show('feed'); if (!posts.some(post => post._id === postId)) await loadPosts(); requestAnimationFrame(() => $('#post-' + postId)?.scrollIntoView({ behavior: 'smooth', block: 'center' })); }
+  if (postId) { show('feed'); await refreshPost(postId); requestAnimationFrame(() => $('#post-' + postId)?.scrollIntoView({ behavior: 'smooth', block: 'center' })); }
   else if (item.dataset.notificationType === 'message') { await loadChats(); show('messages'); const target = conversationId || conversations[0]?._id; if (target) openChat(target); }
 });
 
@@ -900,7 +921,7 @@ document.addEventListener('click', async event => {
   if (!item?.dataset.notificationPost) return;
   const postId = item.dataset.notificationPost;
   show('feed');
-  if (!posts.some(post => post._id === postId)) await loadPosts();
+  await refreshPost(postId);
   const post = posts.find(entry => entry._id === postId);
   const comments = $('#comments-' + postId); if (comments) comments.hidden = false;
   requestAnimationFrame(() => {
@@ -2050,14 +2071,14 @@ $('.message-profile').onclick = async () => {
 // Applies to the bottom nav, the sidebar, the drawer and the logo.
 // =====================================================================
 (() => {
-  let refreshing = false;
+  let refreshing = false, lastRefreshAt = 0;
   const scrollToTop = () => {
     window.scrollTo({ top: 0, behavior: 'smooth' });
     document.querySelector('.main-content')?.scrollTo?.({ top: 0, behavior: 'smooth' });
   };
   const refreshHome = async () => {
-    if (refreshing || !token) return;
-    refreshing = true;
+    if (refreshing || !token || Date.now() - lastRefreshAt < 8000) return; // tapping Home repeatedly just scrolls
+    refreshing = true; lastRefreshAt = Date.now();
     const button = $('#refresh-feed'), label = button?.textContent;
     if (button) button.textContent = '↻ Refreshing…';
     try { await Promise.allSettled([loadPosts({ silent: true }), loadNotifications?.(), loadChats?.()]); }
@@ -2223,4 +2244,56 @@ $('.message-profile').onclick = async () => {
     identityBeforeTerms();
     if (needsTerms() && gate.hidden) showGate();
   };
+})();
+
+
+// =====================================================================
+// Instant likes. The count and heart change the moment you tap, only the
+// tapped buttons are touched (nothing else on the page is redrawn), and the
+// server is told in the background. If it fails, the tap is undone.
+// Reply likes no longer reload the whole feed.
+// =====================================================================
+(() => {
+  const idOf = value => String(value?._id || value?.id || value);
+  const paint = (selector, liked, count) => document.querySelectorAll(selector).forEach(button => {
+    button.classList.toggle('liked', liked);
+    button.textContent = `♥ ${count}`;
+  });
+
+  document.addEventListener('click', async event => {
+    const button = event.target.closest('[data-like]');
+    if (!button || !me) return;
+    event.stopImmediatePropagation();
+    const postId = button.dataset.like, post = posts.find(item => item._id === postId);
+    if (!post) return;
+    const mine = String(me.id);
+    post.likes = Array.isArray(post.likes) ? post.likes : [];
+    const was = post.likes.some(id => idOf(id) === mine);
+    const set = liked => {
+      post.likes = post.likes.filter(id => idOf(id) !== mine);
+      if (liked) post.likes.push(me.id);
+      paint(`[data-like="${postId}"]`, liked, post.likes.length);
+    };
+    set(!was);
+    try { await api(`/posts/${postId}/like`, { method: 'POST' }); }
+    catch (error) { set(was); toast(error.message); }
+  }, true);
+
+  document.addEventListener('click', async event => {
+    const button = event.target.closest('[data-comment-like]');
+    if (!button || !me) return;
+    event.stopImmediatePropagation();
+    const [postId, commentId] = button.dataset.commentLike.split(':');
+    const selector = `[data-comment-like="${postId}:${commentId}"]`;
+    const comment = posts.find(item => item._id === postId)?.comments?.find(item => item._id === commentId);
+    const mine = String(me.id), was = button.classList.contains('liked');
+    const before = comment ? (comment.likes || []).length : (Number(button.textContent.replace(/\D/g, '')) || 0);
+    const set = (liked, count) => {
+      if (comment) { comment.likes = (comment.likes || []).filter(id => idOf(id) !== mine); if (liked) comment.likes.push(me.id); count = comment.likes.length; }
+      paint(selector, liked, count);
+    };
+    set(!was, Math.max(0, before + (was ? -1 : 1)));
+    try { await api(`/posts/${postId}/comments/${commentId}/like`, { method: 'POST' }); }
+    catch (error) { set(was, before); toast(error.message); }
+  }, true);
 })();
