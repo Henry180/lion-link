@@ -3,6 +3,7 @@ const Post = require("../models/Post");
 const User = require("../models/User");
 const Notification = require("../models/Notification");
 const auth = require("../middleware/auth");
+const pulse = require("../utils/pulse");
 
 const router = express.Router();
 
@@ -13,6 +14,8 @@ const router = express.Router();
 // API directly and skip the browser entirely, so the server has to enforce
 // them too.
 const MAX_POST_LENGTH = 280;
+// A quoted post is shown inside the post that quotes it: just the parts needed for that card.
+const QUOTED_POST_POPULATE = { path: "quotedPost", select: "text media author createdAt", populate: { path: "author", select: "name username profileImage role" } };
 const MAX_COMMENT_LENGTH = 280;
 const MAX_MEDIA_ITEMS = 8;
 const ALLOWED_MEDIA_TYPES = new Set(["image", "video", "audio"]);
@@ -63,10 +66,25 @@ router.post("/", auth, async (req, res) => {
     if (normalizedText.length > MAX_POST_LENGTH) {
       return res.status(400).json({ message: `Posts can be at most ${MAX_POST_LENGTH} characters` });
     }
-    if (!normalizedText && cleanedMedia.length === 0) {
+    if (!normalizedText && cleanedMedia.length === 0 && !req.body.quotedPostId) {
       return res.status(400).json({
         message: "Post cannot be empty"
       });
+    }
+
+    // Optional: quote another post, or continue one of your own posts as a thread.
+    let quotedPost = null;
+    if (req.body.quotedPostId) {
+      try { quotedPost = await Post.findById(req.body.quotedPostId).select("author"); } catch { quotedPost = null; }
+      if (!quotedPost) return res.status(404).json({ message: "The post you are quoting is no longer available" });
+    }
+    let threadRoot = null;
+    if (req.body.threadRoot) {
+      let anchor = null;
+      try { anchor = await Post.findById(req.body.threadRoot).select("author threadRoot"); } catch { anchor = null; }
+      if (!anchor) return res.status(404).json({ message: "That thread is no longer available" });
+      if (anchor.author.toString() !== req.user.userId) return res.status(403).json({ message: "You can only add to your own thread" });
+      threadRoot = anchor.threadRoot || anchor._id;
     }
 
     // A slow connection must never turn repeated taps into duplicate posts.
@@ -80,11 +98,22 @@ router.post("/", auth, async (req, res) => {
     const post = await Post.create({
       author: req.user.userId,
       text: normalizedText,
-      media: cleanedMedia
+      media: cleanedMedia,
+      quotedPost: quotedPost ? quotedPost._id : null,
+      threadRoot
     });
+    pulse.noteNewPost(post); // powers the green "new posts" dot on other people's Home icon
+
+    if (threadRoot) await Post.updateOne({ _id: threadRoot }, { $inc: { threadCount: 1 } });
+    // Tell the author of a quoted post (never fails the post itself).
+    if (quotedPost && quotedPost.author.toString() !== req.user.userId) {
+      try { await Notification.create({ recipient: quotedPost.author, actor: req.user.userId, type: "quote", post: post._id }); }
+      catch (error) { console.error("Quote notification error:", error.message); }
+    }
 
     const populatedPost = await Post.findById(post._id)
-    .populate("author", "name username profileImage role");
+    .populate("author", "name username profileImage role")
+    .populate(QUOTED_POST_POPULATE);
 
     res.status(201).json({
       message: "Post created successfully",
@@ -130,6 +159,7 @@ router.get("/", async (req, res) => {
       .limit(limit)
       .populate("author", "name username profileImage role")
       .populate("comments.author", "name username profileImage role")
+      .populate(QUOTED_POST_POPULATE)
       .lean();
 
     // A short browser cache prevents repeat refreshes from immediately
@@ -177,8 +207,13 @@ router.post("/:id/like", auth, async (req, res) => {
       { new: true }
     ).select("likes author");
 
+    // One like notification per person per post: liking, unliking and liking again must not
+    // notify the author every time. (Never lets a notification problem fail the like itself.)
     if (!alreadyLiked && updated.author.toString() !== userId) {
-      await Notification.create({ recipient: updated.author, actor: userId, type: "like", post: updated._id });
+      try {
+        const alreadyNotified = await Notification.exists({ recipient: updated.author, actor: userId, type: "like", post: updated._id, commentId: { $in: ["", null] } });
+        if (!alreadyNotified) await Notification.create({ recipient: updated.author, actor: userId, type: "like", post: updated._id });
+      } catch (error) { console.error("Like notification error:", error.message); }
     }
 
     res.json({
@@ -295,6 +330,13 @@ router.post("/:id/comments/:commentId/like", auth, safe(async (req, res) => {
   const existing = comment.likes.some(id => id.toString() === userId);
   comment.likes = existing ? comment.likes.filter(id => id.toString() !== userId) : [...comment.likes, userId];
   await post.save();
+  if (!existing && comment.author.toString() !== userId) {
+    try {
+      const commentId = String(comment._id);
+      const alreadyNotified = await Notification.exists({ recipient: comment.author, actor: userId, type: "like", post: post._id, commentId });
+      if (!alreadyNotified) await Notification.create({ recipient: comment.author, actor: userId, type: "like", post: post._id, commentId });
+    } catch (error) { console.error("Comment like notification error:", error.message); }
+  }
   res.json({ liked: !existing, likes: comment.likes.length });
 }));
 
@@ -316,12 +358,28 @@ router.delete("/:id/comments/:commentId", auth, safe(async (req, res) => {
 // search engines and link-preview bots. No auth required, matching the
 // public feed above — a shared post link should open the same way the
 // feed already does for anyone who already has the app open.
+// All the posts in a thread, oldest first. Works from any post in the thread.
+router.get("/thread/:id", safe(async (req, res) => {
+  const anchor = await Post.findById(req.params.id).select("threadRoot").lean();
+  if (!anchor) return res.status(404).json({ message: "Post not found" });
+  const root = anchor.threadRoot || anchor._id;
+  const posts = await Post.find({ $or: [{ _id: root }, { threadRoot: root }] })
+    .select("-reports -impressionUsers -comments")
+    .sort({ createdAt: 1 })
+    .limit(100)
+    .populate("author", "name username profileImage role")
+    .populate(QUOTED_POST_POPULATE)
+    .lean();
+  res.set("Cache-Control", "no-store").json({ posts, rootId: String(root) });
+}));
+
 router.get("/:id", async (req, res) => {
   try {
     const post = await Post.findById(req.params.id)
       .select("-reports -impressionUsers")
       .populate("author", "name username profileImage role")
       .populate("comments.author", "name username profileImage role")
+      .populate(QUOTED_POST_POPULATE)
       .lean();
 
     if (!post) {
