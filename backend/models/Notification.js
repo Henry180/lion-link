@@ -4,7 +4,7 @@ const pulse = require("../utils/pulse");
 const notificationSchema = new mongoose.Schema({
   recipient: { type: mongoose.Schema.Types.ObjectId, ref: "User", required: true, index: true },
   actor: { type: mongoose.Schema.Types.ObjectId, ref: "User", required: true },
-  type: { type: String, enum: ["like", "comment", "follow", "message"], required: true },
+  type: { type: String, enum: ["like", "comment", "follow", "message", "quote"], required: true },
   post: { type: mongoose.Schema.Types.ObjectId, ref: "Post" },
   conversation: { type: mongoose.Schema.Types.ObjectId, ref: "Conversation" },
   commentId: { type: String, default: "" },
