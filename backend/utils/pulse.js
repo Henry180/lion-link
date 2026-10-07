@@ -36,4 +36,46 @@ function snapshot(userId) {
   return { chat: `${boot}.${current.chat}`, notif: `${boot}.${current.notif}` };
 }
 
-module.exports = { touch, snapshot };
+// ---- Newest posts (powers the green "new posts" dot on the Home icon) ----
+// A short in-memory list of the latest posts: when each was made and by whom.
+// It is filled as people post, and filled once from the database the first time
+// anyone asks (so it is right after a restart too). The app compares it with the
+// newest post it has on screen; no database work happens per check.
+const recent = []; // newest first: { id, at, author }
+let seeding = null, lastSeedAttempt = 0;
+
+function trimRecent() {
+  recent.sort((a, b) => b.at - a.at);
+  if (recent.length > 20) recent.length = 20;
+}
+
+function noteNewPost(post) {
+  const id = String(post._id);
+  if (recent.some(item => item.id === id)) return;
+  recent.push({ id, at: new Date(post.createdAt || Date.now()).getTime(), author: String(post.author && post.author._id ? post.author._id : post.author) });
+  trimRecent();
+}
+
+async function seedRecent(Post) {
+  if (seeding) return seeding;
+  if (Date.now() - lastSeedAttempt < 30000) return; // after a failure, wait before trying again
+  lastSeedAttempt = Date.now();
+  let failed = false;
+  const job = (async () => {
+    try {
+      const rows = await Post.find().sort({ createdAt: -1 }).limit(20).select("createdAt author").lean();
+      for (const row of rows) noteNewPost(row);
+    } catch (error) {
+      failed = true;
+      console.error("Could not seed recent posts:", error.message);
+    }
+  })();
+  seeding = job;
+  await job;
+  if (failed) seeding = null; // allow another attempt later
+}
+
+// [[timestampMs, authorId], ...] newest first
+function recentPosts() { return recent.map(item => [item.at, item.author]); }
+
+module.exports = { touch, snapshot, noteNewPost, seedRecent, recentPosts };
