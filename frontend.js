@@ -88,6 +88,30 @@ function renderPosts(){const all=posts.map(postMarkup).join('')||'<p class="empt
 async function loadPosts(){posts=(await api('/posts')).posts;renderPosts();}
 // Refresh ONE post (its likes, comments, counts) instead of reloading the whole feed.
 // Used when you open a post from a notification, so you see what actually happened.
+function notificationText(item) {
+  if (item.type === 'follow') return 'started following you';
+  if (item.type === 'quote') return 'quoted your post';
+  if (item.type === 'like') return item.commentId ? 'liked your comment' : 'liked your post';
+  return 'commented on your post';
+}
+// Opening a notification must feel instant: show the post (and the exact reply) from what is
+// already on screen straight away, then quietly bring in anything newer.
+function focusNotificationTarget(postId, commentId, scroll) {
+  const box = $('#comments-' + postId); if (box) box.hidden = false;
+  // Replies in the feed carry no id of their own, but every reply has a like button naming it.
+  const reply = commentId ? ($('#comment-' + commentId) || box?.querySelector(`[data-comment-like$=":${commentId}"]`)?.closest('.comment') || null) : null;
+  const target = reply || $('#post-' + postId);
+  if (target && scroll) target.scrollIntoView({ behavior: 'auto', block: 'center' });
+  if (reply) { reply.classList.remove('notif-flash'); void reply.offsetWidth; reply.classList.add('notif-flash'); }
+  return !!(reply || (!commentId && target));
+}
+async function openNotificationTarget(item) {
+  const postId = item.dataset.notificationPost, commentId = item.dataset.notificationComment || '';
+  show('feed');
+  const foundNow = focusNotificationTarget(postId, commentId, true);
+  await refreshPost(postId);
+  focusNotificationTarget(postId, commentId, !foundNow);
+}
 const postRefreshes = new Map();
 async function refreshPost(postId) {
   if (postRefreshes.has(postId)) return postRefreshes.get(postId);
@@ -582,7 +606,7 @@ openChat = function(id) {
     const follow = event.target.closest('[data-follow]');
     if (follow) { event.preventDefault(); event.stopImmediatePropagation(); if (follow.dataset.followBusy) return; follow.dataset.followBusy = '1'; follow.disabled = true; try { const result = await api(`/users/${encodeURIComponent(follow.dataset.follow)}/follow`, { method:'POST' }); followStates.set(follow.dataset.follow, result.following); if(result.following) followedUsernames.add(follow.dataset.follow); else followedUsernames.delete(follow.dataset.follow); renderPosts(); if (viewedProfile?.username === follow.dataset.follow) { viewedProfile.isFollowing=result.following; viewedProfile.followers=result.followers; renderProfile(viewedProfile); } } catch(error) { toast(error.message); } finally { delete follow.dataset.followBusy; follow.disabled=false; } return; }
     const item = event.target.closest('[data-notification-type]');
-    if (item) { event.preventDefault(); event.stopImmediatePropagation(); if (!item.classList.contains('read')) { await api(`/notifications/${item.dataset.notificationId}/read`, { method:'POST' }).catch(()=>{}); item.classList.remove('unread'); item.classList.add('read'); loadNotifications(); } if (item.dataset.notificationType === 'follow') return openProfile(item.dataset.notificationActor); if (item.dataset.notificationPost) { const postId = item.dataset.notificationPost; show('feed'); $('#post-'+postId)?.scrollIntoView({behavior:'smooth',block:'center'}); await refreshPost(postId); /* fetch just this post so its likes and comments are current */ const box = $('#comments-'+postId); if (box) box.hidden=false; requestAnimationFrame(() => { const commentId = item.dataset.notificationComment; (commentId ? $('#comment-'+commentId) : $('#post-'+postId))?.scrollIntoView({behavior:'smooth',block:'center'}); }); } else if (item.dataset.notificationType === 'message') { await loadChats(); show('messages'); openChat(item.dataset.notificationConversation); } return; }
+    if (item) { event.preventDefault(); event.stopImmediatePropagation(); if (!item.classList.contains('read')) { item.classList.remove('unread'); item.classList.add('read'); api(`/notifications/${item.dataset.notificationId}/read`, { method:'POST' }).catch(()=>{}).finally(() => loadNotifications()); } if (item.dataset.notificationType === 'follow') return openProfile(item.dataset.notificationActor); if (item.dataset.notificationPost) { openNotificationTarget(item); } else if (item.dataset.notificationType === 'message') { await loadChats(); show('messages'); openChat(item.dataset.notificationConversation); } return; }
     const like = event.target.closest('[data-story-like]'); if (like) { const story = stories.find(s=>s._id===like.dataset.storyLike); const previous = [...(story.likes || [])], hasLiked = previous.some(id => String(id._id || id) === String(me.id)); story.likes = hasLiked ? previous.filter(id => String(id._id || id) !== String(me.id)) : [...previous, me.id]; openStory(story); try { const result=await api(`/stories/${story._id}/like`,{method:'POST'}); story.likes = result.liked ? [...previous.filter(id => String(id._id || id) !== String(me.id)), me.id] : previous.filter(id => String(id._id || id) !== String(me.id)); } catch(error){story.likes=previous;openStory(story);toast(error.message);} return; }
     const comment = event.target.closest('[data-story-comment]'); if (comment) { const story=stories.find(s=>s._id===comment.dataset.storyComment); const text=prompt('Write a comment. It will open a direct message with the poster.'); if (!text) return; try { await api(`/stories/${story._id}/comments`,{method:'POST',body:JSON.stringify({text})}); const {conversation}=await api('/conversations',{method:'POST',body:JSON.stringify({username:story.author.username})}); await loadChats(); show('messages'); openChat(conversation._id); } catch(error){toast(error.message);} return; }
     const step=event.target.closest('[data-story-step]'); if(step){const [id,direction]=step.dataset.storyStep.split(':');const current=stories.find(s=>s._id===id),group=stories.filter(s=>s.author?.username===current.author?.username).sort((a,b)=>new Date(a.createdAt)-new Date(b.createdAt)),index=group.findIndex(s=>s._id===id);openStory(group[index+(direction==='next'?1:-1)]);return;}
@@ -1012,7 +1036,7 @@ loadNotifications = async function() {
     const count = $('#notification-count'); count.textContent = unread; count.hidden = !unread;
     const mobile = $('.bottom-nav [data-view="notifications"]');
     if (mobile) mobile.innerHTML = `<span class="ui-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9M10 21h4"/></svg></span>Notification${unread ? `<i class="mobile-notification-count">${unread}</i>` : ''}`;
-    $('#notification-list').innerHTML = bellItems.map(item => { const photo=item.actor?.profileImage ? ` style="background-image:url('${safeUrl(item.actor.profileImage)}');background-size:cover"` : ''; return `<button type="button" class="notification ${item.read ? 'read' : 'unread'}" data-notification-id="${item._id}" data-notification-type="${item.type}" data-notification-actor="${esc(item.actor?.username || '')}" data-notification-post="${item.post?._id || item.post || ''}" data-notification-conversation="${item.conversation?._id || item.conversation || ''}"><div class="avatar avatar-gold"${photo}>${item.actor?.profileImage ? '' : initials(item.actor?.name)}</div><p><b>${esc(item.actor?.name || 'Someone')}</b> ${item.type === 'follow' ? 'started following you' : item.type === 'like' ? 'liked your post' : 'commented on your post'}<small>${when(item.createdAt)}</small></p></button>`; }).join('') || '<p class="empty-profile">You have no notifications yet.</p>';
+    $('#notification-list').innerHTML = bellItems.map(item => { const photo=item.actor?.profileImage ? ` style="background-image:url('${safeUrl(item.actor.profileImage)}');background-size:cover"` : ''; return `<button type="button" class="notification ${item.read ? 'read' : 'unread'}" data-notification-id="${item._id}" data-notification-type="${item.type}" data-notification-actor="${esc(item.actor?.username || '')}" data-notification-post="${item.post?._id || item.post || ''}" data-notification-conversation="${item.conversation?._id || item.conversation || ''}" data-notification-comment="${esc(item.commentId || '')}"><div class="avatar avatar-gold"${photo}>${item.actor?.profileImage ? '' : initials(item.actor?.name)}</div><p><b>${esc(item.actor?.name || 'Someone')}</b> ${notificationText(item)}<small>${when(item.createdAt)}</small></p></button>`; }).join('') || '<p class="empty-profile">You have no notifications yet.</p>';
   } catch (error) { console.warn(error); }
 };
 // The previous code predates the visible top-right switch; restore saved mode.
@@ -1538,6 +1562,7 @@ if(e.target.id==='x-edit-attach'&&attachedMedia){
     let result;
     try{result=await api('/conversations/pulse');}catch{result=null;}
     if(!result||typeof result.chat!=='string'){/* server not updated yet or unreachable: fall back to a full reload, at most every 20s */if(Date.now()-lastFullLoad>20000){lastFullLoad=Date.now();return loadChats();}return;}
+    window.__feedRecent=Array.isArray(result.feed)?result.feed:[];window.updateHomeDot?.(); /* green dot on Home */
     if(result.notif!==lastNotifMarker){lastNotifMarker=result.notif;await loadNotifications?.();} /* bell badge */
     if(result.chat!==lastChatMarker){lastChatMarker=result.chat;await loadChats();} /* DM badges, inbox, open chat, read ticks */
   };
@@ -2077,7 +2102,8 @@ $('.message-profile').onclick = async () => {
     document.querySelector('.main-content')?.scrollTo?.({ top: 0, behavior: 'smooth' });
   };
   const refreshHome = async () => {
-    if (refreshing || !token || Date.now() - lastRefreshAt < 8000) return; // tapping Home repeatedly just scrolls
+    const dotShowing = !!document.querySelector('.home-dot:not([hidden])');
+    if (refreshing || !token || (Date.now() - lastRefreshAt < 8000 && !dotShowing)) return; // tapping Home repeatedly just scrolls, unless new posts are waiting
     refreshing = true; lastRefreshAt = Date.now();
     const button = $('#refresh-feed'), label = button?.textContent;
     if (button) button.textContent = '↻ Refreshing…';
@@ -2296,4 +2322,165 @@ $('.message-profile').onclick = async () => {
     try { await api(`/posts/${postId}/comments/${commentId}/like`, { method: 'POST' }); }
     catch (error) { set(was, before); toast(error.message); }
   }, true);
+})();
+
+// =====================================================================
+// Quote posts, threads, and the green "new posts" dot on Home
+// =====================================================================
+(() => {
+  // How many new posts (from other people) must be waiting before the dot shows.
+  const NEW_POSTS_DOT_MIN = 1;
+
+  const makeModal = (id, html) => {
+    const modal = document.createElement('div');
+    modal.className = 'edit-modal'; modal.id = id; modal.hidden = true; modal.innerHTML = html;
+    document.body.append(modal);
+    modal.querySelectorAll('[data-close-modal]').forEach(button => { button.onclick = () => { modal.hidden = true; }; });
+    modal.addEventListener('click', event => { if (event.target === modal) modal.hidden = true; });
+    return modal;
+  };
+
+  /* ---------- how quotes and threads look inside a post ---------- */
+  const quoteCardHTML = post => {
+    const quoted = post.quotedPost;
+    if (!quoted || typeof quoted !== 'object' || !quoted._id) return '';
+    const author = quoted.author || {};
+    const image = (quoted.media || []).find(item => item.type === 'image');
+    return `<div class="quote-card" data-open-post="${esc(quoted._id)}" role="button" tabindex="0"><div class="quote-head"><strong>${esc(author.name || 'Lion Link User')}</strong><span>@${esc(author.username || '')} · ${when(quoted.createdAt)}</span></div>${quoted.text ? `<p>${esc(quoted.text)}</p>` : ''}${image ? `<img src="${safeUrl(image.url)}" alt="" loading="lazy">` : ''}</div>`;
+  };
+  const threadChipHTML = post => {
+    const added = Number(post.threadCount) || 0;
+    if (!added && !post.threadRoot) return '';
+    return `<button class="thread-chip" type="button" data-open-thread="${post._id}"><span aria-hidden="true">🧵</span> ${post.threadRoot ? 'Part of a thread' : `Thread · ${added + 1} posts`}<b>View thread</b></button>`;
+  };
+
+  const postMarkupBeforeQuotes = postMarkup;
+  postMarkup = function (post) {
+    let html = postMarkupBeforeQuotes(post);
+    const id = post._id, mine = String(post.author?._id || post.author?.id) === String(me?.id);
+    const extras = quoteCardHTML(post) + threadChipHTML(post);
+    html = html.replace('<div class="post-actions">', () => extras + '<div class="post-actions">');
+    html = html.replace(`<button class="action" data-share="${id}">`, () => `<button class="action" data-quote="${id}">❝ Quote</button><button class="action" data-share="${id}">`);
+    // First item in your own post's menu (Edit disappears after 15 minutes, so don't anchor on it).
+    if (mine) html = html.replace(`<div class="post-menu" id="menu-${id}" hidden>`, menuStart => menuStart + `<button data-add-thread="${id}">Add to thread</button>`);
+    return html;
+  };
+
+  /* ---------- a compact, read-only post (preview and viewer) ---------- */
+  const miniPost = post => {
+    const author = post.author || {};
+    const media = (post.media || []).slice(0, 4).map(item => item.type === 'video'
+      ? `<video src="${safeUrl(item.url)}" controls playsinline preload="metadata"></video>`
+      : `<img src="${safeUrl(item.url)}" alt="" loading="lazy">`).join('');
+    return `<article class="mini-post"><header><strong>${esc(author.name || 'Lion Link User')}</strong><span>@${esc(author.username || '')} · ${when(post.createdAt)}</span></header>${post.text ? `<p>${esc(post.text)}</p>` : ''}${media ? `<div class="mini-media">${media}</div>` : ''}${quoteCardHTML(post)}<footer>♥ ${(post.likes || []).length} · 💬 ${Number(post.commentsCount) || 0}</footer></article>`;
+  };
+
+  /* ---------- write a quote, or add to your thread ---------- */
+  const composeModal = makeModal('compose-modal', `<form class="edit-card compose-card" id="compose-form">
+      <button class="modal-close" type="button" data-close-modal="compose-modal" aria-label="Close">×</button>
+      <h2 id="compose-title">Quote post</h2>
+      <div id="compose-preview" class="compose-preview"></div>
+      <textarea id="compose-text" maxlength="280" rows="4"></textarea>
+      <div class="compose-foot"><span id="compose-count">0 / 280</span><button class="post-button" id="compose-submit" type="submit">Post</button></div>
+    </form>`);
+  let compose = null, composing = false;
+  const composeText = composeModal.querySelector('#compose-text'), composeCount = composeModal.querySelector('#compose-count');
+  composeText.addEventListener('input', () => { composeCount.textContent = `${composeText.value.length} / 280`; });
+
+  const openCompose = (kind, post) => {
+    compose = { kind, post };
+    composeModal.querySelector('#compose-title').textContent = kind === 'quote' ? 'Quote post' : 'Add to your thread';
+    composeText.placeholder = kind === 'quote' ? 'Add your thoughts…' : 'Continue your thread…';
+    composeModal.querySelector('#compose-preview').innerHTML = miniPost(post);
+    composeText.value = ''; composeCount.textContent = '0 / 280';
+    composeModal.hidden = false;
+    setTimeout(() => composeText.focus(), 60);
+  };
+
+  composeModal.querySelector('#compose-form').addEventListener('submit', async event => {
+    event.preventDefault();
+    if (composing || !compose) return;
+    const text = composeText.value.trim();
+    if (!text) { toast('Write something first.'); return; }
+    const { kind, post } = compose, button = composeModal.querySelector('#compose-submit');
+    const rootId = post.threadRoot || post._id;
+    composing = true; button.disabled = true; button.textContent = 'Posting…';
+    try {
+      const body = kind === 'quote' ? { text, quotedPostId: post._id } : { text, threadRoot: rootId };
+      const { post: created } = await api('/posts', { method: 'POST', body: JSON.stringify(body) });
+      if (created && !posts.some(item => item._id === created._id)) posts.unshift(created);
+      if (kind === 'thread') { const root = posts.find(item => item._id === rootId); if (root) root.threadCount = (Number(root.threadCount) || 0) + 1; }
+      renderPosts();
+      composeModal.hidden = true; compose = null;
+      toast(kind === 'quote' ? 'Quote posted.' : 'Added to your thread.');
+    } catch (error) { toast(error.message); }
+    finally { composing = false; button.disabled = false; button.textContent = 'Post'; }
+  });
+
+  /* ---------- thread / quoted-post viewer ---------- */
+  const viewerModal = makeModal('thread-modal', `<section class="edit-card thread-card">
+      <button class="modal-close" type="button" data-close-modal="thread-modal" aria-label="Close">×</button>
+      <h2 id="thread-title">Thread</h2><div id="thread-body" class="thread-body"></div><div id="thread-actions"></div>
+    </section>`);
+  const showViewer = (title, html, actionHTML = '') => {
+    viewerModal.querySelector('#thread-title').textContent = title;
+    viewerModal.querySelector('#thread-body').innerHTML = html;
+    viewerModal.querySelector('#thread-actions').innerHTML = actionHTML;
+    viewerModal.hidden = false;
+  };
+  const openThread = async postId => {
+    showViewer('Thread', '<p class="thread-loading">Loading thread…</p>');
+    try {
+      const { posts: list, rootId } = await api(`/posts/thread/${encodeURIComponent(postId)}`);
+      const last = list.at(-1), mineLast = last && String(last.author?._id || last.author?.id) === String(me?.id);
+      showViewer(`Thread · ${list.length} post${list.length === 1 ? '' : 's'}`,
+        `<div class="thread-line">${list.map(miniPost).join('')}</div>`,
+        mineLast ? `<button class="post-button" type="button" id="thread-add" data-thread-root="${esc(rootId)}">Add to this thread</button>` : '');
+      const add = viewerModal.querySelector('#thread-add');
+      if (add) add.onclick = () => { viewerModal.hidden = true; openCompose('thread', { ...last, threadRoot: rootId }); };
+    } catch (error) { viewerModal.hidden = true; toast(error.message); }
+  };
+  const openSinglePost = async postId => {
+    showViewer('Post', '<p class="thread-loading">Loading…</p>');
+    try {
+      const { post } = await api(`/posts/${encodeURIComponent(postId)}?fresh=${Date.now()}`);
+      showViewer('Post', miniPost(post));
+    } catch (error) { viewerModal.hidden = true; toast(error.message || 'That post is no longer available.'); }
+  };
+
+  document.addEventListener('click', event => {
+    const quote = event.target.closest('[data-quote]');
+    if (quote) { const post = posts.find(item => item._id === quote.dataset.quote); if (post) openCompose('quote', post); return; }
+    const add = event.target.closest('[data-add-thread]');
+    if (add) { const menu = $('#menu-' + add.dataset.addThread); if (menu) menu.hidden = true; const post = posts.find(item => item._id === add.dataset.addThread); if (post) openCompose('thread', post); return; }
+    const chip = event.target.closest('[data-open-thread]');
+    if (chip) { openThread(chip.dataset.openThread); return; }
+    const card = event.target.closest('[data-open-post]');
+    if (card) openSinglePost(card.dataset.openPost);
+  });
+  document.addEventListener('keydown', event => {
+    if (event.key === 'Escape') { composeModal.hidden = true; viewerModal.hidden = true; return; }
+    if ((event.key === 'Enter' || event.key === ' ') && event.target.matches?.('[data-open-post]')) { event.preventDefault(); openSinglePost(event.target.dataset.openPost); }
+  });
+
+  /* ---------- the green dot: new posts are waiting ---------- */
+  const ensureDots = () => [...document.querySelectorAll('.bottom-nav [data-view="feed"], .nav-link[data-view="feed"]')].map(button => {
+    let dot = button.querySelector('.home-dot');
+    if (!dot) { dot = document.createElement('i'); dot.className = 'home-dot'; dot.hidden = true; dot.setAttribute('aria-label', 'New posts'); button.append(dot); }
+    return dot;
+  });
+  window.updateHomeDot = () => {
+    const dots = ensureDots();
+    let waiting = 0;
+    if (me && posts.length) {
+      const newest = posts.reduce((latest, post) => Math.max(latest, Date.parse(post.createdAt) || 0), 0);
+      waiting = (window.__feedRecent || []).filter(([at, author]) => at > newest && String(author) !== String(me.id)).length;
+    }
+    dots.forEach(dot => { dot.hidden = waiting < NEW_POSTS_DOT_MIN; });
+  };
+  const loadPostsBeforeDot = loadPosts;
+  loadPosts = async function (options) { const result = await loadPostsBeforeDot(options); window.updateHomeDot(); return result; };
+  const renderPostsBeforeDot = renderPosts;
+  renderPosts = function () { renderPostsBeforeDot(); window.updateHomeDot(); };
+  window.updateHomeDot();
 })();
