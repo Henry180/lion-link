@@ -1,6 +1,7 @@
 const router = require("express").Router();
 const mongoose = require("mongoose");
 const pulse = require("../utils/pulse");
+const Post = require("../models/Post");
 const Conversation = require("../models/Conversation");
 const User = require("../models/User");
 const Notification = require("../models/Notification");
@@ -89,8 +90,10 @@ router.get("/", auth, safe(async (req, res) => {
 // utils/pulse.js), so it costs the database nothing. It returns two change markers:
 // one for messages / read ticks and one for notifications. The app reloads the inbox
 // or the bell only when a marker is different from last time.
-router.get("/pulse", auth, (req, res) => {
-  res.set("Cache-Control", "no-store").json(pulse.snapshot(req.user.userId));
+router.get("/pulse", auth, async (req, res) => {
+  // First check after a restart: load the latest posts once (never fails the request).
+  try { await pulse.seedRecent(Post); } catch { /* the dot is a nicety; skip it if this fails */ }
+  res.set("Cache-Control", "no-store").json({ ...pulse.snapshot(req.user.userId), feed: pulse.recentPosts() });
 });
 
 router.post("/", auth, safe(async (req, res) => {
