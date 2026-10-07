@@ -32,7 +32,13 @@ const postSchema = new mongoose.Schema(
     // Kept in sync by the comment create/delete routes rather than computed
     // from comments.length on every read. This lets the feed send only a
     // page of comments per post while still reporting the true total.
-    commentsCount: { type: Number, default: 0, min: 0 }
+    commentsCount: { type: Number, default: 0, min: 0 },
+    // Quote post: this post comments on another post, which is shown inside it.
+    quotedPost: { type: mongoose.Schema.Types.ObjectId, ref: "Post", default: null },
+    // Thread: a run of posts by one person. Every later post points at the first one,
+    // and the first one keeps a count of how many were added after it.
+    threadRoot: { type: mongoose.Schema.Types.ObjectId, ref: "Post", default: null },
+    threadCount: { type: Number, default: 0, min: 0 }
   },
   {
     timestamps: true
@@ -42,5 +48,7 @@ const postSchema = new mongoose.Schema(
 // The feed is normally read newest-first; this lets MongoDB serve that order
 // directly instead of scanning and sorting the entire collection.
 postSchema.index({ createdAt: -1 });
+// Opening a thread looks posts up by their first post.
+postSchema.index({ threadRoot: 1, createdAt: 1 });
 
 module.exports = mongoose.model("Post", postSchema);
