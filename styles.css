@@ -2945,3 +2945,82 @@ body.terms-locked { overflow: hidden; }
 /* The reply or comment you opened from a notification flashes briefly */
 .notif-flash { animation: notif-flash 1.8s ease-out; }
 @keyframes notif-flash { 0% { background: rgba(0, 122, 61, 0.25); } 100% { background: transparent; } }
+
+/* =========================================================
+   LIKES: green when liked (comments too) + a small pop
+   ========================================================= */
+.comment button[data-comment-like].liked { color: #007a3d; font-weight: 700; }
+.like-pop { animation: like-pop 0.4s ease; }
+@keyframes like-pop { 0% { transform: scale(1); } 40% { transform: scale(1.35); } 100% { transform: scale(1); } }
+
+/* =========================================================
+   POST PAGE (quoted post / thread)
+   ========================================================= */
+.detail-panel {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: flex;
+  flex-direction: column;
+  background: var(--paper, #fff);
+  overflow: hidden;
+}
+.detail-panel[hidden] { display: none; }
+.detail-sheet { display: flex; flex-direction: column; width: 100%; max-width: 640px; height: 100%; margin: 0 auto; background: var(--paper, #fff); }
+.detail-header { display: flex; align-items: center; gap: 10px; padding: 10px 12px; border-bottom: 1px solid var(--line, #dce8df); background: var(--paper, #fff); }
+.detail-header button { border: 0; background: none; padding: 4px 10px; font-size: 24px; line-height: 1; color: var(--ink, #14231a); cursor: pointer; }
+.detail-header h2 { margin: 0; font: 700 18px "DM Sans", sans-serif; }
+.detail-body { flex: 1; overflow-y: auto; padding: 12px 14px 96px; overscroll-behavior: contain; }
+.detail-list { display: grid; gap: 12px; }
+.detail-list .thread-chip { display: none; }
+.detail-list.is-thread > .post { position: relative; }
+.detail-list.is-thread > .post:not(:last-child)::after {
+  content: "";
+  position: absolute;
+  left: 36px;
+  top: 62px;
+  bottom: -12px;
+  width: 2px;
+  background: rgba(0, 122, 61, 0.32);
+  pointer-events: none;
+}
+.detail-status { margin: 18px 0; text-align: center; color: var(--muted, #5b6470); }
+.detail-add { width: 100%; margin-top: 14px; }
+body.detail-open { overflow: hidden; }
+@media (min-width: 900px) {
+  .detail-panel { padding: 24px; background: rgba(0, 20, 10, 0.5); }
+  .detail-sheet { height: calc(100vh - 48px); border-radius: 16px; overflow: hidden; box-shadow: 0 20px 60px rgba(0, 0, 0, 0.35); }
+}
+
+/* =========================================================
+   COMPOSER FOR QUOTES AND THREADS
+   ========================================================= */
+#compose-modal { z-index: 95; }
+#crop-modal, #trim-modal { z-index: 120; } /* the crop and trim tools open on top of the composer */
+.compose-card { width: min(560px, 100%); max-height: 92vh; overflow-y: auto; }
+.compose-preview .quote-card { pointer-events: none; }
+.draft { position: relative; margin-top: 12px; padding: 10px 12px 12px; border: 1px solid var(--line, #dce8df); border-radius: 12px; background: var(--paper, #fff); }
+.draft-head { display: flex; align-items: center; justify-content: space-between; min-height: 10px; }
+.draft-num { display: inline-grid; place-items: center; min-width: 22px; height: 22px; padding: 0 6px; border-radius: 999px; background: rgba(0, 122, 61, 0.12); color: var(--green, #007a3d); font: 700 12px "DM Sans", sans-serif; }
+.draft-num:empty { display: none; }
+.draft-remove { border: 0; background: none; font-size: 20px; line-height: 1; color: var(--muted, #5b6470); cursor: pointer; }
+.draft textarea { display: block; width: 100%; box-sizing: border-box; margin: 6px 0 4px; padding: 6px 2px; border: 0; outline: 0; background: transparent; font: 16px/1.5 "DM Sans", sans-serif; color: inherit; resize: vertical; }
+.draft .media-preview { margin: 6px 0; }
+.draft-tools { display: flex; align-items: center; gap: 6px; }
+.draft-count { margin-left: auto; font-size: 13px; color: var(--muted, #5b6470); }
+.draft-count.near-limit { color: #d97706; }
+.draft-count.at-limit { color: #c7352a; font-weight: 700; }
+.emoji-row { display: flex; flex-wrap: wrap; gap: 2px; margin: 4px 0; }
+.emoji-row[hidden] { display: none; }
+.emoji-row button { border: 0; background: none; padding: 4px 5px; font-size: 21px; line-height: 1; border-radius: 8px; cursor: pointer; }
+.emoji-row button:hover { background: rgba(0, 122, 61, 0.1); }
+.compose-add { display: block; width: 100%; margin-top: 12px; padding: 10px; border: 1px dashed var(--green, #007a3d); border-radius: 10px; background: none; color: var(--green, #007a3d); font: 700 14px "DM Sans", sans-serif; cursor: pointer; }
+.compose-add[hidden] { display: none; }
+.compose-foot { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 14px; }
+#compose-status { color: var(--muted, #5b6470); font-size: 13px; }
+.compose-foot .post-button:disabled { opacity: 0.55; cursor: not-allowed; }
+.thread-tool { font-size: 17px; }
+.thread-tool-wide { width: auto; padding: 0 12px; font-size: 14px; font-weight: 700; }
+
+/* The composer's file pickers are opened by the 📎 button; the page's generic input styling must not show them. */
+.compose-card .draft input[type="file"] { display: none !important; }
