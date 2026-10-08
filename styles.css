@@ -2854,3 +2854,94 @@ body.terms-locked { overflow: hidden; }
   .x-unread-divider { scroll-margin-top: 110px; }
   .x-message, .x-empty { scroll-margin-bottom: 180px; }
 }
+
+/* =========================================================
+   QUOTE POSTS, THREADS, NEW-POSTS DOT, NOTIFICATION HIGHLIGHT
+   ========================================================= */
+.quote-card {
+  margin: 8px 0 4px;
+  padding: 10px 12px;
+  border: 1px solid var(--line, #dce8df);
+  border-radius: 12px;
+  background: rgba(0, 122, 61, 0.04);
+  cursor: pointer;
+  transition: background 0.15s;
+}
+.quote-card:hover { background: rgba(0, 122, 61, 0.09); }
+.quote-head { display: flex; flex-wrap: wrap; gap: 6px; align-items: baseline; font-size: 13px; }
+.quote-head span { color: var(--muted, #5b6470); font-size: 12px; }
+.quote-card p { margin: 4px 0 0; font-size: 14px; line-height: 1.5; overflow-wrap: anywhere; }
+.quote-card img { display: block; width: 100%; max-height: 180px; margin-top: 8px; border-radius: 8px; object-fit: cover; }
+
+.thread-chip {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 8px 0 2px;
+  padding: 6px 12px;
+  border: 0;
+  border-radius: 999px;
+  background: rgba(0, 122, 61, 0.1);
+  color: var(--green, #007a3d);
+  font: 600 12px "DM Sans", sans-serif;
+  cursor: pointer;
+}
+.thread-chip b { margin-left: auto; font-weight: 700; text-decoration: underline; text-underline-offset: 2px; }
+
+.compose-card { width: min(520px, 100%); }
+.compose-card textarea {
+  display: block;
+  width: 100%;
+  box-sizing: border-box;
+  margin: 12px 0 8px;
+  padding: 12px;
+  border: 1px solid var(--line, #dce8df);
+  border-radius: 10px;
+  font: 15px/1.5 "DM Sans", sans-serif;
+  resize: vertical;
+}
+.compose-foot { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.compose-foot span { color: var(--muted, #5b6470); font-size: 13px; }
+.compose-preview { max-height: 38vh; overflow-y: auto; }
+
+.mini-post { padding: 12px 14px; border: 1px solid var(--line, #dce8df); border-radius: 12px; background: var(--paper, #fff); }
+.mini-post header { display: flex; flex-wrap: wrap; gap: 6px; align-items: baseline; }
+.mini-post header span { color: var(--muted, #5b6470); font-size: 12px; }
+.mini-post p { margin: 6px 0 0; line-height: 1.55; overflow-wrap: anywhere; }
+.mini-post footer { margin-top: 8px; color: var(--muted, #5b6470); font-size: 12px; }
+.mini-media { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 6px; margin-top: 8px; }
+.mini-media img, .mini-media video { width: 100%; max-height: 220px; border-radius: 8px; object-fit: cover; }
+
+.thread-card { width: min(560px, 100%); max-height: 88vh; overflow-y: auto; }
+.thread-body { margin-top: 8px; }
+.thread-loading { color: var(--muted, #5b6470); }
+.thread-line { display: grid; gap: 10px; position: relative; }
+.thread-line .mini-post { margin-left: 14px; position: relative; }
+.thread-line .mini-post::before { content: ""; position: absolute; left: -14px; top: 0; bottom: -10px; width: 2px; background: rgba(0, 122, 61, 0.35); }
+.thread-line .mini-post:last-child::before { bottom: 50%; }
+#thread-actions .post-button { width: 100%; margin-top: 12px; }
+
+/* The green "new posts" dot on the Home icon */
+.home-dot {
+  position: absolute;
+  top: 6px;
+  left: calc(50% + 8px);
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: #22c55e;
+  border: 2px solid var(--paper, #fff);
+  box-sizing: content-box;
+  animation: home-dot-pulse 1.8s ease-out infinite;
+}
+.home-dot[hidden] { display: none; }
+.nav-link .home-dot { position: static; margin-left: auto; flex: none; }
+@keyframes home-dot-pulse {
+  0% { box-shadow: 0 0 0 0 rgba(34, 197, 94, 0.55); }
+  70% { box-shadow: 0 0 0 7px rgba(34, 197, 94, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(34, 197, 94, 0); }
+}
+
+/* The reply or comment you opened from a notification flashes briefly */
+.notif-flash { animation: notif-flash 1.8s ease-out; }
+@keyframes notif-flash { 0% { background: rgba(0, 122, 61, 0.25); } 100% { background: transparent; } }
