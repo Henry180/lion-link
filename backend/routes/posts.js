@@ -366,7 +366,6 @@ router.get("/thread/:id", safe(async (req, res) => {
   const posts = await Post.find({ $or: [{ _id: root }, { threadRoot: root }] })
     .select("-reports -impressionUsers -comments")
     .sort({ createdAt: 1 })
-    .limit(100)
     .populate("author", "name username profileImage role")
     .populate(QUOTED_POST_POPULATE)
     .lean();
@@ -375,8 +374,12 @@ router.get("/thread/:id", safe(async (req, res) => {
 
 router.get("/:id", async (req, res) => {
   try {
-    const post = await Post.findById(req.params.id)
-      .select("-reports -impressionUsers")
+    // ?comments=20 returns only the newest 20 comments (older ones load on demand), so opening a
+    // popular post stays fast. Without it, every comment is returned as before.
+    const newest = Math.min(Number.parseInt(req.query.comments, 10) || 0, 200);
+    let query = Post.findById(req.params.id).select("-reports -impressionUsers");
+    if (newest > 0) query = query.select({ comments: { $slice: -newest } });
+    const post = await query
       .populate("author", "name username profileImage role")
       .populate("comments.author", "name username profileImage role")
       .populate(QUOTED_POST_POPULATE)
