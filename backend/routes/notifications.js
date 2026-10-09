@@ -22,7 +22,11 @@ router.get("/", auth, async (req, res) => {
 });
 
 router.post("/read", auth, async (req, res) => {
-  await Notification.updateMany({ recipient: req.user.userId, read: false }, { read: true });
+  // ?bell=1 marks only the bell notifications (likes, replies, follows, quotes) as seen and
+  // leaves unread direct messages alone — those clear when the chat is opened.
+  const filter = { recipient: req.user.userId, read: false };
+  if (req.query.bell) filter.type = { $ne: "message" };
+  await Notification.updateMany(filter, { read: true });
   pulse.touch(req.user.userId, "notif");
   res.status(204).end();
 });
