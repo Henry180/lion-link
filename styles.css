@@ -3024,3 +3024,12 @@ body.detail-open { overflow: hidden; }
 
 /* The composer's file pickers are opened by the 📎 button; the page's generic input styling must not show them. */
 .compose-card .draft input[type="file"] { display: none !important; }
+
+/* =========================================================
+   Quote count, "Make a thread" button, new-notification divider
+   ========================================================= */
+.action.quote-count { font-weight: 700; text-decoration: underline; text-underline-offset: 2px; }
+.composer-footer .thread-tool { font-size: 13px; font-weight: 700; white-space: nowrap; padding: 4px 8px; }
+.thread-tool-wide { white-space: nowrap; }
+.notif-divider { margin: 6px 2px 0; font-size: 12px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; color: var(--muted, #5b6470); }
+.notification.fresh { border-color: var(--gold); background: var(--cream); }
