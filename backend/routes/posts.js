@@ -50,6 +50,20 @@ const safe = handler => (req, res, next) =>
   });
 
 
+// How many posts quote each of these posts. Counted live (one indexed query for the whole
+// page) rather than stored, so it can never drift when a quote is deleted.
+async function attachQuoteCounts(list) {
+  const ids = list.map(item => item._id).filter(Boolean);
+  if (!ids.length) return list;
+  const rows = await Post.aggregate([
+    { $match: { quotedPost: { $in: ids } } },
+    { $group: { _id: "$quotedPost", count: { $sum: 1 } } }
+  ]);
+  const counts = new Map(rows.map(row => [String(row._id), row.count]));
+  list.forEach(item => { item.quotesCount = counts.get(String(item._id)) || 0; });
+  return list;
+}
+
 // =====================================================
 // CREATE POST
 // =====================================================
@@ -102,7 +116,9 @@ router.post("/", auth, async (req, res) => {
       quotedPost: quotedPost ? quotedPost._id : null,
       threadRoot
     });
-    pulse.noteNewPost(post); // powers the green "new posts" dot on other people's Home icon
+    // Powers the green "new posts" dot on other people's Home icon. Later posts of a thread
+    // are not in the feed (only the first one is), so they must not light the dot.
+    if (!threadRoot) pulse.noteNewPost(post);
 
     if (threadRoot) await Post.updateOne({ _id: threadRoot }, { $inc: { threadCount: 1 } });
     // Tell the author of a quoted post (never fails the post itself).
@@ -141,7 +157,9 @@ router.get("/", async (req, res) => {
     // bandwidth even if a client sends an excessive value.
     const requestedLimit = Number.parseInt(req.query.limit, 10);
     const limit = Number.isFinite(requestedLimit) ? Math.min(Math.max(requestedLimit, 1), 50) : 20;
-    const posts = await Post.find()
+    // Only the first post of a thread is in the feed (threadRoot is empty for ordinary posts
+    // and for the first post of a thread). The rest are read by opening the thread.
+    const posts = await Post.find({ threadRoot: null })
       // reports and impressionUsers are internal bookkeeping — reports in
       // particular names who reported a post and why, and has no business
       // being sent to every visitor of the public feed. Excluding both also
@@ -161,6 +179,7 @@ router.get("/", async (req, res) => {
       .populate("comments.author", "name username profileImage role")
       .populate(QUOTED_POST_POPULATE)
       .lean();
+    await attachQuoteCounts(posts);
 
     // A short browser cache prevents repeat refreshes from immediately
     // consuming backend egress while keeping the feed reasonably fresh.
@@ -369,7 +388,30 @@ router.get("/thread/:id", safe(async (req, res) => {
     .populate("author", "name username profileImage role")
     .populate(QUOTED_POST_POPULATE)
     .lean();
+  await attachQuoteCounts(posts);
   res.set("Cache-Control", "no-store").json({ posts, rootId: String(root) });
+}));
+
+// Everyone who quoted this post, newest first (the "Quotes" page, like the replies list).
+router.get("/:id/quotes", safe(async (req, res) => {
+  const exists = await Post.exists({ _id: req.params.id });
+  if (!exists) return res.status(404).json({ message: "Post not found" });
+  const requestedLimit = Number.parseInt(req.query.limit, 10);
+  const limit = Number.isFinite(requestedLimit) ? Math.min(Math.max(requestedLimit, 1), 50) : 30;
+  const [posts, total] = await Promise.all([
+    Post.find({ quotedPost: req.params.id })
+      .select("-reports -impressionUsers")
+      .select({ comments: { $slice: -20 } })
+      .sort({ createdAt: -1 })
+      .limit(limit)
+      .populate("author", "name username profileImage role")
+      .populate("comments.author", "name username profileImage role")
+      .populate(QUOTED_POST_POPULATE)
+      .lean(),
+    Post.countDocuments({ quotedPost: req.params.id })
+  ]);
+  await attachQuoteCounts(posts);
+  res.set("Cache-Control", "no-store").json({ posts, total });
 }));
 
 router.get("/:id", async (req, res) => {
@@ -388,6 +430,7 @@ router.get("/:id", async (req, res) => {
     if (!post) {
       return res.status(404).json({ message: "Post not found" });
     }
+    await attachQuoteCounts([post]);
 
     res.set("Cache-Control", "public, max-age=30, stale-while-revalidate=60").json({ post });
 
