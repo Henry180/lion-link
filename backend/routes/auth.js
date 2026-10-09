@@ -43,6 +43,19 @@ setInterval(() => {
 }, 10 * 60 * 1000);
 
 const issueToken = user => jwt.sign({ userId: user._id, role: user.role }, process.env.JWT_SECRET, { expiresIn: "7d" });
+
+// Follower / following numbers (and who you follow) must travel with every response that
+// says "this is you". Login, sign-up and profile-edit used to leave them out, so the
+// counts stayed blank until the next page refresh loaded /auth/me.
+async function followFields(user) {
+  const ids = user.following || [];
+  const followingUsers = ids.length ? await User.find({ _id: { $in: ids } }).select("username").lean() : [];
+  return {
+    followers: (user.followers || []).length,
+    following: ids.length,
+    followingUsernames: followingUsers.map(item => item.username)
+  };
+}
 const usernameFrom = value => String(value || "lion").toLowerCase().replace(/[^a-z0-9_]/g, "").slice(0, 16) || "lion";
 async function uniqueGoogleUsername(name) { const base = usernameFrom(name); let username = base.length >= 3 ? base : `${base}user`; let number = 0; while (await User.exists({ username })) username = `${base.slice(0, 15)}${++number}`; return username; }
 
@@ -121,6 +134,7 @@ async function register(req, res) {
         email: user.email,
         username: user.username,
         role: user.role,
+        ...(await followFields(user)),
         createdAt: user.createdAt
       }
     });
@@ -187,7 +201,7 @@ router.patch("/me", auth, async (req, res) => {
   if (req.body.profileImage) user.profileImage = req.body.profileImage;
   if (req.body.coverImage) user.coverImage = req.body.coverImage;
   await user.save();
-  res.json({ user: { id:user._id, termsAcceptedAt: user.termsAcceptedAt || null, name:user.name, email:user.email, username:user.username, role:user.role, bio:user.bio, profileImage:user.profileImage, coverImage:user.coverImage, location:user.location, createdAt:user.createdAt } });
+  res.json({ user: { id:user._id, termsAcceptedAt: user.termsAcceptedAt || null, name:user.name, email:user.email, username:user.username, role:user.role, bio:user.bio, profileImage:user.profileImage, coverImage:user.coverImage, location:user.location, ...(await followFields(user)), createdAt:user.createdAt } });
 });
 
 // Records that the signed-in person agreed to the Terms & Conditions and Privacy Policy.
@@ -217,7 +231,7 @@ router.post("/become-admin", auth, rateLimit("become-admin", 8, 15 * 60 * 1000),
   if (!invite) return res.status(400).json({ message: "That admin invite code is invalid or has expired." });
   user.role = "admin"; await user.save();
   const token = jwt.sign({ userId: user._id, role: user.role }, process.env.JWT_SECRET, { expiresIn: "7d" });
-  res.json({ token, user: { id: user._id, termsAcceptedAt: user.termsAcceptedAt || null, name: user.name, email: user.email, username: user.username, role: user.role, bio: user.bio, profileImage: user.profileImage, coverImage: user.coverImage, location: user.location, createdAt: user.createdAt } });
+  res.json({ token, user: { id: user._id, termsAcceptedAt: user.termsAcceptedAt || null, name: user.name, email: user.email, username: user.username, role: user.role, bio: user.bio, profileImage: user.profileImage, coverImage: user.coverImage, location: user.location, ...(await followFields(user)), createdAt: user.createdAt } });
 });
 
 router.post("/forgot-password", rateLimit("forgot-password", 5, 15 * 60 * 1000), async (req, res) => {
@@ -310,6 +324,8 @@ router.post("/login", rateLimit("login", 10, 15 * 60 * 1000), async (req, res) =
         bio: user.bio,
         profileImage: user.profileImage,
         coverImage: user.coverImage,
+        location: user.location,
+        ...(await followFields(user)),
         createdAt: user.createdAt
       }
     });
