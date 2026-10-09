@@ -50,5 +50,7 @@ const postSchema = new mongoose.Schema(
 postSchema.index({ createdAt: -1 });
 // Opening a thread looks posts up by their first post.
 postSchema.index({ threadRoot: 1, createdAt: 1 });
+// Counting and listing the quotes of a post looks posts up by the post they quote.
+postSchema.index({ quotedPost: 1, createdAt: -1 });
 
 module.exports = mongoose.model("Post", postSchema);
