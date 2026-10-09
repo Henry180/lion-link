@@ -63,7 +63,7 @@ async function seedRecent(Post) {
   let failed = false;
   const job = (async () => {
     try {
-      const rows = await Post.find().sort({ createdAt: -1 }).limit(20).select("createdAt author").lean();
+      const rows = await Post.find({ threadRoot: null }).sort({ createdAt: -1 }).limit(20).select("createdAt author").lean();
       for (const row of rows) noteNewPost(row);
     } catch (error) {
       failed = true;
