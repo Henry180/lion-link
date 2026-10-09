@@ -2364,7 +2364,9 @@ $('.message-profile').onclick = async () => {
     const id = post._id, mine = String(post.author?._id || post.author?.id) === String(me?.id);
     const extras = quoteCardHTML(post) + threadChipHTML(post);
     html = html.replace('<div class="post-actions">', () => extras + '<div class="post-actions">');
-    html = html.replace(`<button class="action" data-share="${id}">`, () => `<button class="action" data-quote="${id}">❝ Quote</button><button class="action" data-share="${id}">`);
+    const quotes = Number(post.quotesCount) || 0;
+    const quotesButton = quotes ? `<button class="action quote-count" type="button" data-view-quotes="${id}" aria-label="View ${quotes} quote${quotes === 1 ? '' : 's'}">${quotes} ${quotes === 1 ? 'quote' : 'quotes'}</button>` : '';
+    html = html.replace(`<button class="action" data-share="${id}">`, () => `<button class="action" data-quote="${id}">❝ Quote</button>${quotesButton}<button class="action" data-share="${id}">`);
     // First item in your own post's menu (Edit disappears after 15 minutes, so don't anchor on it).
     if (mine) html = html.replace(`<div class="post-menu" id="menu-${id}" hidden>`, menuStart => menuStart + `<button data-add-thread="${id}">Add to thread</button>`);
     return html;
@@ -2393,18 +2395,19 @@ $('.message-profile').onclick = async () => {
   const renderDetail = () => {
     if (!detail || panel.hidden) return;
     const list = detail.ids.map(id => posts.find(post => post._id === id)).filter(Boolean);
-    if (!list.length && !detail.loading && !detail.error && !detail.skeleton) { closeAllDetail(); return; } // e.g. you deleted it
+    if (!list.length && !detail.loading && !detail.error && !detail.skeleton && !detail.quotes) { closeAllDetail(); return; } // e.g. you deleted it
     const scrolled = detailBody.scrollTop;
     let html = '';
     if (list.length) html += `<div class="detail-list${detail.thread ? ' is-thread' : ''}">${list.map(postMarkup).join('')}</div>`;
     else if (detail.skeleton) html += `<div class="detail-list">${miniPost(detail.skeleton)}</div>`;
+    if (detail.quotes && !list.length && !detail.loading && !detail.error) html += '<p class="detail-status">No quotes yet.</p>';
     if (detail.loading) html += '<p class="detail-status" id="detail-status">Loading…</p>';
     if (detail.error) html += `<div class="detail-status"><p>${esc(detail.error)}</p><button type="button" class="post-button" id="detail-retry">Try again</button></div>`;
     if (detail.thread && detail.canAdd && list.length) html += '<button class="post-button detail-add" type="button" id="detail-add-thread">＋ Add to this thread</button>';
     detailBody.innerHTML = html;
     detailBody.querySelectorAll('.comment-thread').forEach(box => { box.hidden = false; }); // replies are always open on a post page
     detailBody.scrollTop = scrolled;
-    panel.querySelector('#detail-title').textContent = detail.thread ? `Thread · ${list.length || 1} post${list.length === 1 ? '' : 's'}` : 'Post';
+    panel.querySelector('#detail-title').textContent = detail.quotes ? 'Quotes' : detail.thread ? `Thread · ${list.length || 1} post${list.length === 1 ? '' : 's'}` : 'Post';
   };
 
   // Posts that only exist for this page are kept in `posts` (so likes, replies and quotes work on
@@ -2425,6 +2428,10 @@ $('.message-profile').onclick = async () => {
         const { posts: list, rootId } = await api(`/posts/thread/${encodeURIComponent(current.anchorId)}`);
         mergeDetailPosts(list);
         current.ids = list.map(post => post._id); current.rootId = rootId; current.canAdd = list.length > 0 && isMine(list[list.length - 1]);
+      } else if (current.quotes) {
+        const { posts: list } = await api(`/posts/${encodeURIComponent(current.anchorId)}/quotes`);
+        mergeDetailPosts(list);
+        current.ids = list.map(post => post._id);
       } else {
         const { post } = await api(`/posts/${encodeURIComponent(current.anchorId)}?comments=20&fresh=${Date.now()}`);
         mergeDetailPosts([post]); current.ids = [post._id];
@@ -2444,6 +2451,7 @@ $('.message-profile').onclick = async () => {
   // Shown at once from what is already known (a post already in the feed is fully interactive straight away),
   // then refreshed in the background.
   const openPostDetail = (postId, skeleton) => openDetail({ thread: false, anchorId: postId, ids: posts.some(post => post._id === postId) ? [postId] : [], skeleton: skeleton || null, loading: true, error: '' });
+  const openQuotesDetail = postId => openDetail({ thread: false, quotes: true, anchorId: postId, ids: [], skeleton: null, loading: true, error: '' });
   const openThreadDetail = postId => openDetail({ thread: true, anchorId: postId, ids: posts.some(post => post._id === postId) ? [postId] : [], skeleton: null, loading: true, error: '', canAdd: false });
 
   function closeAllDetail() {
@@ -2523,7 +2531,7 @@ $('.message-profile').onclick = async () => {
   const openCompose = config => {
     compose = { mode: config.mode, source: config.source || null, quoted: config.quoted || null, rootId: config.rootId || null, context: config.context || null };
     drafts = config.drafts && config.drafts.length ? config.drafts : [newDraft()];
-    composeModal.querySelector('#compose-title').textContent = compose.mode === 'quote' ? 'Quote post' : compose.mode === 'thread-continue' ? 'Add to your thread' : 'Start a thread';
+    composeModal.querySelector('#compose-title').textContent = compose.mode === 'quote' ? 'Quote post' : compose.mode === 'thread-continue' ? 'Add to your thread' : 'Make a thread';
     const reference = compose.quoted || compose.context;
     composeModal.querySelector('#compose-context').innerHTML = reference ? miniPost(reference) : '';
     composeModal.querySelector('#compose-status').textContent = '';
@@ -2597,7 +2605,12 @@ $('.message-profile').onclick = async () => {
         if (compose.mode === 'quote') body.quotedPostId = compose.quoted._id;
         if (compose.rootId) body.threadRoot = compose.rootId;
         const { post } = await api('/posts', { method: 'POST', body: JSON.stringify(body) });
-        if (post && !posts.some(item => item._id === post._id)) posts.unshift(post);
+        // Only the first post of a thread goes in the feed; the rest are seen by opening the thread.
+        if (post && post.threadRoot) {
+          mergeDetailPosts([post]);
+          if (detail?.thread && detail.rootId === String(post.threadRoot) && !detail.ids.includes(post._id)) { detail.ids.push(post._id); detail.canAdd = true; }
+        } else if (post && !posts.some(item => item._id === post._id)) posts.unshift(post);
+        if (compose.mode === 'quote' && compose.quoted) compose.quoted.quotesCount = (Number(compose.quoted.quotesCount) || 0) + 1;
         if (compose.rootId) { const root = posts.find(item => item._id === compose.rootId); if (root) root.threadCount = (Number(root.threadCount) || 0) + 1; }
         else if (compose.mode === 'thread-new' && total > 1) compose.rootId = post._id; // the first post becomes the thread's start
         drafts.shift();
@@ -2617,15 +2630,15 @@ $('.message-profile').onclick = async () => {
   });
 
   /* ---------- the 🧵 buttons in the two composers ---------- */
-  const threadTool = (id, label) => { const button = document.createElement('button'); button.type = 'button'; button.className = 'tool-button thread-tool'; button.id = id; button.title = 'Add another post — start a thread'; button.textContent = label; return button; };
+  const threadTool = (id, label) => { const button = document.createElement('button'); button.type = 'button'; button.className = 'tool-button thread-tool'; button.id = id; button.title = 'Make a thread — write several posts in a row'; button.textContent = label; return button; };
   const feedTools = document.querySelector('.composer-footer > div');
   if (feedTools) {
-    const button = threadTool('thread-start', '🧵'); feedTools.append(button);
+    const button = threadTool('thread-start', '🧵 Make a thread'); button.classList.add('thread-tool-wide'); feedTools.append(button);
     button.addEventListener('click', () => openCompose({ mode: 'thread-new', source: 'feed', drafts: [newDraft($('#post-text').value, [...selectedMedia])] }));
   }
   const quickForm = $('#quick-post-form');
   if (quickForm) {
-    const button = threadTool('quick-thread-start', '🧵 Thread'); button.classList.add('thread-tool-wide');
+    const button = threadTool('quick-thread-start', '🧵 Make a thread'); button.classList.add('thread-tool-wide');
     quickForm.querySelector('.small-post')?.before(button);
     button.addEventListener('click', () => openCompose({ mode: 'thread-new', source: 'quick', drafts: [newDraft($('#quick-post-text').value, [...quickMedia])] }));
   }
@@ -2638,6 +2651,8 @@ $('.message-profile').onclick = async () => {
     if (add) { const menu = $('#menu-' + add.dataset.addThread); if (menu) menu.hidden = true; const post = posts.find(item => item._id === add.dataset.addThread); if (post) openCompose({ mode: 'thread-continue', rootId: post.threadRoot || post._id, context: post }); return; }
     const chip = event.target.closest('[data-open-thread]');
     if (chip) { openThreadDetail(chip.dataset.openThread); return; }
+    const viewQuotes = event.target.closest('[data-view-quotes]');
+    if (viewQuotes) { openQuotesDetail(viewQuotes.dataset.viewQuotes); return; }
     const card = event.target.closest('[data-open-post]');
     if (card) { const id = card.dataset.openPost; openPostDetail(id, posts.map(post => post.quotedPost).find(quoted => quoted && quoted._id === id)); return; }
     if (event.target.closest('#detail-retry')) { loadDetail(); return; }
@@ -2671,4 +2686,95 @@ $('.message-profile').onclick = async () => {
   const renderPostsBeforeDot = renderPosts;
   renderPosts = function () { renderPostsBeforeDot(); window.updateHomeDot(); };
   window.updateHomeDot();
+})();
+
+// =====================================================================
+// Your own follower / following numbers on launch
+// Login, sign-up and profile-edit used to hand back a profile without the counts, so they
+// showed 0 until a refresh loaded /auth/me. The server now sends them; this is the safety
+// net for any response that still leaves them out.
+// =====================================================================
+(() => {
+  const hasCounts = () => typeof me?.followers === 'number' && typeof me?.following === 'number';
+  const paintOwnCounts = () => {
+    if (!me || viewedProfile) return;
+    const numbers = document.querySelectorAll('.profile-stats b');
+    if (numbers.length < 2) return;
+    numbers[0].textContent = typeof me.following === 'number' ? me.following : '–';
+    numbers[1].textContent = typeof me.followers === 'number' ? me.followers : '–';
+  };
+  let hydrating = false;
+  const hydrateOwnCounts = async () => {
+    if (!me || !token) return;
+    if (hasCounts()) { paintOwnCounts(); return; }
+    paintOwnCounts(); // shows – instead of a misleading 0 while we fetch
+    if (hydrating) return;
+    hydrating = true;
+    try {
+      const { user } = await api('/auth/me');
+      if (me && user && user.username === me.username) {
+        me.followers = user.followers; me.following = user.following; me.followingUsernames = user.followingUsernames;
+        (user.followingUsernames || []).forEach(username => followedUsernames.add(username));
+        paintOwnCounts();
+      }
+    } catch { /* the next sign-in or refresh will try again */ }
+    finally { hydrating = false; }
+  };
+  const identityBeforeCounts = identity;
+  identity = function () { identityBeforeCounts.apply(this, arguments); hydrateOwnCounts(); };
+  if (me) hydrateOwnCounts();
+})();
+
+// =====================================================================
+// Notifications open where the new ones start
+// Opening the bell takes a snapshot of what was unseen, marks it seen (so the badge clears),
+// keeps those items highlighted under a "New" divider while you are there, and scrolls so
+// the oldest unseen one is in view.
+// =====================================================================
+(() => {
+  const fresh = new Set();
+  let lastOpened = 0;
+
+  const decorate = scroll => {
+    const list = document.querySelector('#notification-list'); if (!list) return;
+    list.querySelectorAll('.notif-divider').forEach(node => node.remove());
+    const items = [...list.querySelectorAll('.notification[data-notification-id]')];
+    const isNew = item => item.classList.contains('unread') || fresh.has(item.dataset.notificationId);
+    items.forEach(item => item.classList.toggle('fresh', fresh.has(item.dataset.notificationId) && !item.classList.contains('unread')));
+    const newItems = items.filter(isNew);
+    if (!newItems.length) return;
+    const makeDivider = text => { const node = document.createElement('p'); node.className = 'notif-divider'; node.textContent = text; return node; };
+    newItems[0].before(makeDivider(`${newItems.length} new`));
+    const firstSeen = items.find(item => !isNew(item));
+    if (firstSeen) firstSeen.before(makeDivider('Earlier'));
+    if (scroll) newItems[newItems.length - 1].scrollIntoView({ block: 'nearest' });
+  };
+
+  const loadNotificationsBeforeFresh = loadNotifications;
+  loadNotifications = async function () {
+    const result = await loadNotificationsBeforeFresh.apply(this, arguments);
+    decorate(false);
+    return result;
+  };
+
+  const openNotifications = async () => {
+    if (!token) return;
+    try {
+      await loadNotifications();
+      const unseen = [...document.querySelectorAll('#notification-list .notification.unread[data-notification-id]')].map(item => item.dataset.notificationId);
+      // Coming straight back from a post you opened keeps what was highlighted; a fresh visit starts over.
+      if (Date.now() - lastOpened > 5 * 60 * 1000) fresh.clear();
+      lastOpened = Date.now();
+      unseen.forEach(id => fresh.add(id));
+      decorate(true);
+      if (unseen.length) { await api('/notifications/read?bell=1', { method: 'POST' }); await loadNotifications(); }
+    } catch (error) { console.warn(error); }
+  };
+
+  const showBeforeFresh = show;
+  show = function (view) {
+    const result = showBeforeFresh.apply(this, arguments);
+    if (view === 'notifications') openNotifications();
+    return result;
+  };
 })();
