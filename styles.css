@@ -3175,3 +3175,23 @@ body.dark .nav-link.active, body.dark .nav-link:hover { background: #15191c; col
 .composer-footer .thread-tool, .thread-tool-wide { color: var(--gold-dark); background: none; border: 0; cursor: pointer; }
 .mobile-header .theme-toggle { width: 36px; height: 36px; background: var(--paper); color: var(--ink); border: 1px solid var(--line); }
 @media (max-width: 700px) { .desktop-theme-toggle { display: none; } }
+
+/* =========================================================
+   Fit every screen: nothing in the feed may be wider than the
+   column. The post action row wraps instead of overflowing, and
+   on phones Share / Quote / Report show icon-only.
+   ========================================================= */
+.main-content, .view, .post, .post-content, .detail-sheet, .detail-body, .detail-list { min-width: 0; max-width: 100%; }
+.main-content { overflow-x: clip; }
+.post-content, .quote-card, .post-text, .post-meta { overflow-wrap: anywhere; }
+.post-actions { flex-wrap: wrap; row-gap: 0; }
+.quote-card { max-width: 100%; overflow: hidden; }
+.quote-card img, .quote-card video, .post-media img, .post-media video, .gallery img, .gallery video { max-width: 100%; }
+@media (max-width: 560px) {
+  .post-actions { margin-left: -6px; gap: 0; }
+  .post-actions .action { padding: 7px 8px; }
+  .post-actions [data-share] span, .post-actions [data-quote] span, .post-actions [data-report-post] span { display: none; }
+  .post { padding-left: 14px; padding-right: 14px; gap: 10px; }
+  .detail-body { padding: 10px 10px 96px; }
+  .detail-sheet { max-width: 100%; }
+}
