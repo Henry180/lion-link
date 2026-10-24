@@ -7,6 +7,8 @@ export async function onRequest(context) {
   const target = baseUrl.replace(/\/$/, "") + incoming.pathname.replace(/^\/api/, "") + incoming.search;
   const headers = new Headers(context.request.headers);
   headers.delete("host");
+  // Lets the API count each visitor separately instead of seeing one shared proxy address.
+  headers.set("x-client-ip", context.request.headers.get("cf-connecting-ip") || "");
   try {
     const response = await fetch(target, { method: context.request.method, headers, body: ["GET", "HEAD"].includes(context.request.method) ? undefined : context.request.body });
     return new Response(response.body, { status: response.status, headers: { "content-type": response.headers.get("content-type") || "application/json" } });
