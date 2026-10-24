@@ -14,6 +14,7 @@ const eventRoutes = require("./routes/events");
 const groupRoutes = require("./routes/groups");
 const adminRoutes = require("./routes/admin").router;
 const uploadRoutes = require("./routes/uploads");
+const { createLimiter } = require("./middleware/rateLimit");
 
 const app = express();
 let databaseReady = false;
@@ -48,7 +49,19 @@ app.use(cors({
 // A 512 MB instance cannot safely parse many multi-megabyte JSON uploads at
 // once. Photos are compressed in the browser; keep an explicit upper bound so
 // concurrent uploads fail cleanly instead of exhausting the Node process.
+app.disable("x-powered-by");
+app.use((_req, res, next) => {
+  res.set({ "X-Content-Type-Options": "nosniff", "Referrer-Policy": "strict-origin-when-cross-origin", "X-Frame-Options": "DENY" });
+  next();
+});
 app.use(express.json({ limit: "3mb" }));
+
+// Protects the server from one account or address using up everyone's capacity. The limits
+// are far above normal use (the app checks in about every 10 seconds) and are counted per
+// signed-in account, so a shared campus Wi-Fi does not matter.
+app.use("/api", createLimiter({ name: "api", max: 600, windowMs: 60 * 1000 }));
+app.use("/api", createLimiter({ name: "api-write", max: 120, windowMs: 60 * 1000, methods: ["POST", "PUT", "PATCH", "DELETE"] }));
+app.use("/api/uploads", createLimiter({ name: "uploads", max: 40, windowMs: 10 * 60 * 1000, methods: ["POST"], message: "Too many uploads. Please wait a few minutes and try again." }));
 app.use("/api", (req, res, next) => {
   if (!databaseReady) return res.status(503).json({ message: "Lion Link is reconnecting to its database. Please try again in a moment." });
   next();
