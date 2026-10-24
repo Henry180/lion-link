@@ -9,7 +9,7 @@
     <meta name="description" content="Lion Link is a campus social platform built mainly for UNN students, and open to other students and individuals too: a feed, official announcements, groups, events, and messaging in one place." />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-    <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Playfair+Display:wght@700;800&display=swap" rel="stylesheet" />
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
     <link rel="stylesheet" href="/styles.css" />
   </head>
   <body>
@@ -17,13 +17,13 @@
       <aside class="sidebar">
         <a class="brand" href="#feed" aria-label="Lion Link home"><span class="brand-mark">L</span><span>Lion <b>Link</b></span></a>
         <nav class="main-nav" aria-label="Main navigation">
-          <button class="nav-link active" data-view="feed"><span>⌂</span> Home</button>
-          <button class="nav-link" data-view="announcements"><span>📣</span> Announcements <i id="announcement-count" hidden>0</i></button>
+          <button class="nav-link active" data-view="feed"><span class="ui-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 11l8-7 8 7v9a1 1 0 0 1-1 1h-4v-6H9v6H5a1 1 0 0 1-1-1z"/></svg></span> Home</button>
+          <button class="nav-link" data-view="announcements"><span class="ui-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 11v2a2 2 0 0 0 2 2h2l3 4h2l-1-4h3l6 3V6l-6 3H5a2 2 0 0 0-2 2z"/></svg></span> Announcements <i id="announcement-count" hidden>0</i></button>
           <button class="nav-link" data-view="groups"><span class="ui-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><circle cx="9" cy="8" r="3"/><circle cx="17" cy="10" r="2"/><path d="M3 19c0-3 2.7-5 6-5s6 2 6 5M15 15c3 0 5 1.5 5 4"/></svg></span> Groups</button>
-          <button class="nav-link" data-view="messages"><span>✉</span> Messages <i id="message-count" hidden>0</i></button>
-          <button class="nav-link" data-view="events"><span>◇</span> Events</button>
-          <button class="nav-link" data-view="profile"><span>♙</span> Profile</button>
-          <button class="nav-link" data-view="admin"><span>⚙</span> Lion Link Admin</button>
+          <button class="nav-link" data-view="messages"><span class="ui-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="M3 7l9 6 9-6"/></svg></span> Messages <i id="message-count" hidden>0</i></button>
+          <button class="nav-link" data-view="events"><span class="ui-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="5" width="16" height="15" rx="2"/><path d="M4 10h16M9 3v4M15 3v4"/></svg></span> Events</button>
+          <button class="nav-link" data-view="profile"><span class="ui-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="8" r="4"/><path d="M4 21c0-4 3.6-6 8-6s8 2 8 6"/></svg></span> Profile</button>
+          <button class="nav-link" data-view="admin"><span class="ui-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3l8 3v6c0 5-3.5 8-8 9-4.5-1-8-4-8-9V6z"/></svg></span> Lion Link Admin</button>
         </nav>
         <div class="sidebar-actions"><button class="post-button" id="open-post">Create post</button></div>
         <div class="account-wrap"><button class="account" id="account-profile" type="button"><div class="avatar avatar-gold">JS</div><div><strong>Jordan Smith</strong><small>@jordansmith</small></div></button><label class="story-add" title="Add story">+<input id="story-upload" type="file" accept="image/*,video/*" hidden></label></div>
@@ -63,7 +63,7 @@
         <footer>© <span id="copyright-year"></span> Lion Link · <button data-info="help">Help</button> · <button data-info="privacy">Privacy</button> · <button data-info="terms">Terms</button></footer>
       </aside>
     </div>
-    <nav class="bottom-nav" aria-label="Mobile navigation"><button data-view="feed" class="active"><span>⌂</span>Home</button><button data-view="announcements"><span class="ui-icon"><svg viewBox="0 0 24 24"><path d="M3 11v2a2 2 0 0 0 2 2h2l3 4h2l-1-4h3l6 3V6l-6 3H5a2 2 0 0 0-2 2Z"/></svg></span>Announcement</button><button data-view="messages"><span>✉</span>Messages<i class="bottom-nav-message-count" hidden>0</i></button><button data-view="profile"><span>♙</span>Profile</button></nav>
+    <nav class="bottom-nav" aria-label="Mobile navigation"><button data-view="feed" class="active"><span class="ui-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 11l8-7 8 7v9a1 1 0 0 1-1 1h-4v-6H9v6H5a1 1 0 0 1-1-1z"/></svg></span>Home</button><button data-view="announcements"><span class="ui-icon"><svg viewBox="0 0 24 24"><path d="M3 11v2a2 2 0 0 0 2 2h2l3 4h2l-1-4h3l6 3V6l-6 3H5a2 2 0 0 0-2 2Z"/></svg></span>Announcement</button><button data-view="messages"><span class="ui-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="M3 7l9 6 9-6"/></svg></span>Messages<i class="bottom-nav-message-count" hidden>0</i></button><button data-view="profile"><span class="ui-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="8" r="4"/><path d="M4 21c0-4 3.6-6 8-6s8 2 8 6"/></svg></span>Profile</button></nav>
     <div class="toast" id="toast" role="status"></div>
     <div class="edit-modal" id="download-lion-link-popup" hidden><section class="edit-card"><button class="modal-close" type="button" data-close-modal="download-lion-link-popup" aria-label="Close download prompt">×</button><span class="brand-mark">L</span><h2 id="download-lion-link-title">Download Lion Link</h2><p id="download-lion-link-copy">Keep Lion Link on your home screen for faster access.</p><button class="small-post" id="download-lion-link">Download Lion Link</button></section></div>
     <button id="floating-post" class="post-button" type="button" hidden aria-label="Create post">+</button>
