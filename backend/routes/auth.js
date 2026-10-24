@@ -5,6 +5,7 @@ const User = require("../models/User");
 const auth = require("../middleware/auth");
 const AdminInvite = require("../models/AdminInvite");
 const crypto = require("crypto");
+const { clientIp } = require("../middleware/rateLimit");
 
 const router = express.Router();
 
@@ -20,9 +21,9 @@ const router = express.Router();
 // you ever run multiple instances, this should move to a shared store
 // (e.g. Redis) instead, since each instance would otherwise count separately.
 const attempts = new Map();
-function rateLimit(name, max, windowMs) {
+function rateLimit(name, max, windowMs, keyFn = clientIp) {
   return (req, res, next) => {
-    const key = `${name}:${req.ip}`;
+    const key = `${name}:${keyFn(req)}`;
     const now = Date.now();
     const record = attempts.get(key);
     if (!record || now - record.start > windowMs) {
@@ -152,8 +153,8 @@ async function register(req, res) {
     });
   }
 }
-router.post("/register", rateLimit("register", 10, 15 * 60 * 1000), register);
-router.post("/signup", rateLimit("register", 10, 15 * 60 * 1000), register);
+router.post("/register", rateLimit("register", 60, 15 * 60 * 1000), register);
+router.post("/signup", rateLimit("register", 60, 15 * 60 * 1000), register);
 
 router.get("/google", (req, res) => {
   if (!process.env.GOOGLE_CLIENT_ID || !process.env.GOOGLE_CLIENT_SECRET || !process.env.APP_URL) return res.status(503).send("Google sign-in has not been configured yet.");
@@ -234,7 +235,7 @@ router.post("/become-admin", auth, rateLimit("become-admin", 8, 15 * 60 * 1000),
   res.json({ token, user: { id: user._id, termsAcceptedAt: user.termsAcceptedAt || null, name: user.name, email: user.email, username: user.username, role: user.role, bio: user.bio, profileImage: user.profileImage, coverImage: user.coverImage, location: user.location, ...(await followFields(user)), createdAt: user.createdAt } });
 });
 
-router.post("/forgot-password", rateLimit("forgot-password", 5, 15 * 60 * 1000), async (req, res) => {
+router.post("/forgot-password", rateLimit("forgot-ip", 60, 15 * 60 * 1000), rateLimit("forgot-password", 5, 15 * 60 * 1000, req => `${clientIp(req)}:${String(req.body?.email || req.body?.identity || "").trim().toLowerCase()}`), async (req, res) => {
   const email = String(req.body.email || "").trim().toLowerCase();
   const user = email && await User.findOne({ email });
   if (user) {
@@ -266,7 +267,7 @@ router.post("/reset-password", async (req, res) => {
 // LOGIN
 // =====================================================
 
-router.post("/login", rateLimit("login", 10, 15 * 60 * 1000), async (req, res) => {
+router.post("/login", rateLimit("login-ip", 300, 15 * 60 * 1000), rateLimit("login", 10, 15 * 60 * 1000, req => `${clientIp(req)}:${String(req.body?.email || req.body?.identity || "").trim().toLowerCase()}`), async (req, res) => {
   try {
     const { email, identity, password } = req.body;
 
