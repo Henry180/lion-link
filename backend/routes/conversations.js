@@ -2,6 +2,7 @@ const router = require("express").Router();
 const mongoose = require("mongoose");
 const pulse = require("../utils/pulse");
 const Post = require("../models/Post");
+const Announcement = require("../models/Announcement");
 const Conversation = require("../models/Conversation");
 const User = require("../models/User");
 const Notification = require("../models/Notification");
@@ -93,7 +94,8 @@ router.get("/", auth, safe(async (req, res) => {
 router.get("/pulse", auth, async (req, res) => {
   // First check after a restart: load the latest posts once (never fails the request).
   try { await pulse.seedRecent(Post); } catch { /* the dot is a nicety; skip it if this fails */ }
-  res.set("Cache-Control", "no-store").json({ ...pulse.snapshot(req.user.userId), feed: pulse.recentPosts() });
+  try { await pulse.seedAnnouncements(Announcement); } catch { /* same for the announcement badge */ }
+  res.set("Cache-Control", "no-store").json({ ...pulse.snapshot(req.user.userId), feed: pulse.recentPosts(), ann: pulse.latestAnnouncementAt() });
 });
 
 router.post("/", auth, safe(async (req, res) => {

@@ -54,6 +54,8 @@ export async function onRequestGet(context) {
     ? truncate(user.bio, 155)
     : `${user.name}'s profile on Lion Link — UNN's campus social platform.`;
   const image = user.profileImage || "";
+  // No photo of its own? Show the Lion Link logo in link previews.
+  const previewImage = image || new URL("/assets/lion-link-og.png", request.url).href;
 
   return new HTMLRewriter()
     .on("title", { element(el) { el.setInnerContent(title); } })
@@ -64,8 +66,8 @@ export async function onRequestGet(context) {
           `<meta property="og:title" content="${escapeHtml(title)}">` +
           `<meta property="og:description" content="${escapeHtml(description)}">` +
           `<meta property="og:type" content="profile">` +
-          (image ? `<meta property="og:image" content="${escapeHtml(image)}">` : "") +
-          `<meta name="twitter:card" content="${image ? "summary_large_image" : "summary"}">`;
+          `<meta property="og:image" content="${escapeHtml(previewImage)}">` +
+          `<meta name="twitter:card" content="summary_large_image">`;
         el.append(tags, { html: true });
       }
     })

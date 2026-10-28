@@ -11,20 +11,28 @@
 // to view content, this makes the LINK PREVIEW accurate — it does not make
 // the post's full text/comments searchable on Google.
 
+const BOT_PATTERN = /bot|crawl|spider|slurp|preview|facebookexternalhit|facebot|whatsapp|telegram|slack|discord|linkedin|twitter|pinterest|embedly|vkshare|skype|mastodon|signal|google-/i;
+
 export async function onRequestGet(context) {
   const { params, request, next } = context;
   const id = params.id;
 
+  // Only link-preview bots (WhatsApp, Facebook, X, Google…) need the post's details in the page.
+  // A real person opening a shared link gets the app straight away instead of waiting on the API.
+  const userAgent = request.headers.get("user-agent") || "";
+  if (!BOT_PATTERN.test(userAgent)) return next();
+
   let post = null;
   try {
     const apiUrl = new URL(`/api/posts/${encodeURIComponent(id)}`, request.url);
-    const apiResponse = await fetch(apiUrl.toString());
+    // Never let a slow API hold up the page for long.
+    const apiResponse = await fetch(apiUrl.toString(), { signal: AbortSignal.timeout(3000) });
     if (apiResponse.ok) {
       const data = await apiResponse.json();
       post = data.post;
     }
   } catch {
-    // Network hiccup — fall through to the normal app shell below.
+    // Network hiccup or timeout — fall through to the normal app shell below.
   }
 
   const appResponse = await next();
@@ -38,6 +46,8 @@ export async function onRequestGet(context) {
     ? truncate(post.text, 155)
     : `See this post by ${authorName} on Lion Link — UNN's campus social platform.`;
   const firstImage = (post.media || []).find(item => item.type === "image")?.url || "";
+  // No photo of its own? Show the Lion Link logo in link previews.
+  const previewImage = firstImage || new URL("/assets/lion-link-og.png", request.url).href;
 
   return new HTMLRewriter()
     .on("title", { element(el) { el.setInnerContent(title); } })
@@ -48,8 +58,8 @@ export async function onRequestGet(context) {
           `<meta property="og:title" content="${escapeHtml(title)}">` +
           `<meta property="og:description" content="${escapeHtml(description)}">` +
           `<meta property="og:type" content="article">` +
-          (firstImage ? `<meta property="og:image" content="${escapeHtml(firstImage)}">` : "") +
-          `<meta name="twitter:card" content="${firstImage ? "summary_large_image" : "summary"}">`;
+          `<meta property="og:image" content="${escapeHtml(previewImage)}">` +
+          `<meta name="twitter:card" content="summary_large_image">`;
         el.append(tags, { html: true });
       }
     })

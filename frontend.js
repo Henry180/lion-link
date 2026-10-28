@@ -145,7 +145,7 @@ function renderProfile(user){if(!user)return;const own=user.username===me?.usern
 const renderProfileBase = renderProfile;
 renderProfile = function(user){renderProfileBase(user);if(user)$('#profile-name').innerHTML=`${esc(user.name)}${verifiedBadge(user)}`;};
 async function openProfile(username){if(username===me.username){renderProfile(me);show('profile');return;}try{const {user}=await api('/users/'+encodeURIComponent(username));renderProfile(user);show('profile');}catch(error){toast(error.message);}}
-async function loadAnnouncements(){announcements=(await api('/announcements')).announcements;const attachment=a=>(a.media||[]).map(m=>m.type==='video'?`<video class="announcement-media" controls src="${safeUrl(m.url)}"></video>`:`<img class="announcement-media" src="${safeUrl(m.url)}" alt="Announcement media">`).join('');$('#announcement-list').innerHTML=announcements.map(a=>`<article class="announcement-card"><div class="date">${new Date(a.createdAt).toLocaleDateString()}</div><div><span class="official-label">LION LINK ADMIN ${verifiedBadge({role:'admin'})}</span><h3>${esc(a.title)}</h3><p>${linkify(a.body)}</p>${attachment(a)}</div></article>`).join('')||'<p class="empty-profile">No announcements yet.</p>';$('#admin-announcements').innerHTML=announcements.map(a=>`<article class="admin-announcement"><div><b>${esc(a.title)}</b><p>${esc(a.body)}</p>${attachment(a)}</div><button data-remove-announcement="${a._id}">Remove</button></article>`).join('');}
+async function loadAnnouncements(){announcements=(await api('/announcements')).announcements;const attachment=a=>(a.media||[]).map((m,i)=>m.type==='video'?`<video class="announcement-media" controls src="${safeUrl(m.url)}"></video>`:`<img class="announcement-media is-openable" src="${safeUrl(m.url)}" alt="Announcement media" data-announcement-media="${esc(String(a._id))}:${i}" role="button" tabindex="0">`).join('');$('#announcement-list').innerHTML=announcements.map(a=>`<article class="announcement-card"><div class="date">${new Date(a.createdAt).toLocaleDateString()}</div><div><span class="official-label">LION LINK ADMIN ${verifiedBadge({role:'admin'})}</span><h3>${esc(a.title)}</h3><p>${linkify(a.body)}</p>${attachment(a)}</div></article>`).join('')||'<p class="empty-profile">No announcements yet.</p>';$('#admin-announcements').innerHTML=announcements.map(a=>`<article class="admin-announcement"><div><b>${esc(a.title)}</b><p>${esc(a.body)}</p>${attachment(a)}</div><button data-remove-announcement="${a._id}">Remove</button></article>`).join('');}
 async function loadChats(){conversations=(await api('/conversations')).conversations;$('#conversations').innerHTML=conversations.map(c=>{const other=c.members.find(x=>(x._id||x.id)!==me.id)||me,last=c.messages.at(-1);return `<button class="conversation" data-chat="${c._id}"><div class="avatar avatar-gold">${initials(other.name)}</div><div><strong>${esc(other.name)}</strong><p>${esc(last?.text||(last?.media?'📎 Media':'Start a conversation'))}</p></div></button>`}).join('')||'<p class="empty-profile">No messages yet. Click a user’s avatar to start one.</p>';}
 function openChat(id){activeChat=conversations.find(c=>c._id===id);if(!activeChat)return;const other=activeChat.members.find(x=>(x._id||x.id)!==me.id)||me;const messageMarkup=m=>{const mine=(m.sender?._id||m.sender)===me.id,media=m.media?.url?`<div class="message-media">${m.media.type==='video'?`<video controls src="${safeUrl(m.media.url)}"></video>`:`<img src="${safeUrl(m.media.url)}" alt="Message attachment">`}</div>`:'';return `<div class="message-row ${mine?'mine':''}"><div class="bubble">${media}${m.text?`<div class="message-text">${esc(m.text)}</div>`:''}</div></div>`};$('#chat-empty').hidden=true;$('#active-chat').hidden=false;$('#active-chat').innerHTML=`<header class="chat-header"><div class="avatar avatar-gold">${initials(other.name)}</div><div><strong>${esc(other.name)}</strong><small>@${esc(other.username)}</small></div></header><div class="messages" id="messages">${activeChat.messages.map(messageMarkup).join('')}</div><form class="chat-compose" id="chat-form"><input maxlength="300" placeholder="Write a message…"><label class="chat-media-picker" title="Attach image or video">📎<input id="chat-media-input" type="file" accept="image/*,video/*" hidden></label><button class="chat-send" type="submit" aria-label="Send message">➤</button></form>`;let chatMedia=null;$('#chat-media-input').onchange=async e=>{const file=e.target.files[0];if(!file)return;if(file.size>5*1024*1024){e.target.value='';return toast('Attachments must be 5 MB or smaller.')}try{chatMedia=await fileData(file);toast('Attachment ready to send.')}catch{toast('That attachment could not be read.')}};$('#chat-form').onsubmit=async e=>{e.preventDefault();const text=e.target.elements[0].value.trim();if(!text&&!chatMedia)return;try{await api(`/conversations/${id}/messages`,{method:'POST',body:JSON.stringify({text,media:chatMedia})});await loadChats();openChat(id)}catch(error){toast(error.message)}};}
 function loginMode(){const signup=$('#login-mode').value==='signup';$('#login-name-field').hidden=!signup;$('#login-username-field').hidden=!signup;{const consent=$('#login-consent-field');if(consent)consent.hidden=!signup;}$('#login-email').placeholder=signup?'your@email.com':'email or username';}
@@ -270,17 +270,45 @@ function configureInstallPopup(){
  if(isIosDevice){title.textContent='Add Lion Link to your iPhone or iPad';copy.textContent='Tap the button below, then choose “Add to Home Screen” in Safari’s Share menu.';button.textContent='Open Share menu';}
  else {title.textContent='Download Lion Link';copy.textContent=deferredInstall?'Install Lion Link for faster access from your home screen.':'Use your browser menu and choose “Install app” or “Add to Home Screen”.';button.textContent='Download Lion Link';}
 }
-window.addEventListener('beforeinstallprompt', event => { event.preventDefault(); deferredInstall=event; configureInstallPopup(); if (!sessionStorage.getItem('lionLinkInstallPromptShown')) { sessionStorage.setItem('lionLinkInstallPromptShown', '1'); $('#download-lion-link-popup').hidden=false; } });
-window.addEventListener('appinstalled',()=>{deferredInstall=null;$('#download-lion-link-popup').hidden=true;toast('Lion Link has been added to your home screen.');});
+// Remember that this device already has the app, so we never nag people who installed it.
+try{if(isInstalled)localStorage.setItem('lionLinkInstalled','1')}catch{}
+const installedBefore=()=>{try{return localStorage.getItem('lionLinkInstalled')==='1'}catch{return false}};
+// The browser only fires this when the app is NOT installed, so it also clears a stale "installed" flag (e.g. after an uninstall).
+window.addEventListener('beforeinstallprompt', event => { event.preventDefault(); deferredInstall=event; try{localStorage.removeItem('lionLinkInstalled')}catch{} configureInstallPopup(); });
+window.addEventListener('appinstalled',()=>{deferredInstall=null;try{localStorage.setItem('lionLinkInstalled','1')}catch{}$('#download-lion-link-popup').hidden=true;toast('Lion Link has been added to your home screen.');});
 if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js');
 async function promptLionLinkInstall(){
  if(isInstalled){toast('Lion Link is already installed.');return;}
  if(isIosDevice){if(navigator.share){try{await navigator.share({title:'Lion Link',text:'Add Lion Link to your home screen.',url:location.href});}catch{}}else toast('In Safari, tap Share, then choose “Add to Home Screen”.');return;}
  if(!deferredInstall){toast('Use your browser menu and choose “Install app” or “Add to Home Screen”.');return;}
- await deferredInstall.prompt(); await deferredInstall.userChoice; deferredInstall=null;
+ const installEvent=deferredInstall; deferredInstall=null;
+ await installEvent.prompt(); await installEvent.userChoice;
 }
-$('#install-app').onclick=()=>{ configureInstallPopup(); $('#download-lion-link-popup').hidden=false; };
+// Profile → “Download Lion Link”: one tap opens the browser's install dialog straight away.
+// Only when the browser can't do that (iPhone/iPad, some desktop browsers) do we show the how-to popup.
+$('#install-app').onclick=()=>{
+ if(isInstalled||installedBefore()&&!deferredInstall){toast('Lion Link is already installed on this device.');return;}
+ if(deferredInstall&&!isIosDevice){promptLionLinkInstall();return;}
+ configureInstallPopup(); $('#download-lion-link-popup').hidden=false;
+};
 $('#download-lion-link').onclick=async()=>{ $('#download-lion-link-popup').hidden=true; await promptLionLinkInstall(); };
+// Auto pop-up: once per visit, for every signed-in person who hasn't installed the app yet (new and existing users).
+// It waits until they are signed in and nothing else (login, terms, a post, a viewer) is open.
+(()=>{
+ const FLAG='lionLinkInstallPromptShown'; let calm=0, ticks=0;
+ const timer=setInterval(()=>{
+  let shown=false; try{shown=!!sessionStorage.getItem(FLAG)}catch{}
+  if(isInstalled||shown||++ticks>300){clearInterval(timer);return;}
+  if(!me||!token||overlayOpen()){calm=0;return;}
+  if(installedBefore()&&!deferredInstall){calm=0;return;}
+  // Chrome/Edge/Android need the browser's install event first; iPhone/iPad and other browsers get the how-to popup.
+  if(!(deferredInstall||isIosDevice||!('onbeforeinstallprompt' in window))){calm=0;return;}
+  if(++calm<2)return; // two calm checks in a row, so it never lands on top of something else
+  clearInterval(timer);
+  try{sessionStorage.setItem(FLAG,'1')}catch{}
+  configureInstallPopup(); $('#download-lion-link-popup').hidden=false;
+ },3000);
+})();
 $('#account-profile').onclick=()=>{renderProfile(me);show('profile');};
 $('#logout').onclick=()=>{if(!confirm('Log out of Lion Link? You will need to sign in again to post, message, or manage your profile.'))return;localStorage.removeItem('lionLinkToken');token=null;me=null;$('#login-overlay').classList.remove('hidden');toast('You have been logged out.');};
 $('#share-app').onclick=async()=>{const link=location.href;try{if(navigator.share)await navigator.share({title:'Lion Link',text:'Join Lion Link — your campus, connected.',url:link});else{await navigator.clipboard.writeText(link);toast('Lion Link link copied — send it to your friends!')}}catch{}};
@@ -292,7 +320,7 @@ $('.follow-profile').onclick=async()=>{const user=viewedProfile;if(!user)return;
 async function uploadStory(file){if(!file)return;try{await api('/stories',{method:'POST',body:JSON.stringify({media:await fileData(file)})});await loadStories();toast('Story posted for 24 hours.');}catch(error){toast(error.message);}}
 $('#profile-story-upload')?.addEventListener('change',e=>uploadStory(e.target.files[0]));
 document.addEventListener('click',async event=>{const d=event.target.dataset;if(d.removeMedia!==undefined){releaseMedia(selectedMedia.splice(+d.removeMedia,1)[0]);window.renderSelectedMedia?.();}if(d.menu){const menu=$('#menu-'+d.menu);menu.hidden=!menu.hidden;}if(d.commentLike){const [postId,commentId]=d.commentLike.split(':');try{await api(`/posts/${postId}/comments/${commentId}/like`,{method:'POST'});await loadPosts({silent:true});const box=$('#comments-'+postId);if(box)box.hidden=false;}catch(error){toast(error.message)}}if(d.replyTo){const [postId,commentId]=d.replyTo.split(':');const form=document.querySelector(`[data-comment-form="${postId}"]`);const target=posts.find(p=>p._id===postId)?.comments?.find(c=>c._id===commentId);if(form){form.dataset.replyTo=commentId;const indicator=form.querySelector('.reply-indicator');const name=target?.author?.name||'this comment';if(indicator){indicator.hidden=false;indicator.innerHTML=`Replying to <b>${esc(name)}</b><button type="button" class="cancel-reply" aria-label="Cancel reply">×</button>`;}const replyInput=form.querySelector('input');if(replyInput){replyInput.placeholder=`Reply to ${name}…`;replyInput.focus();}}}if(event.target.closest('.cancel-reply')){const form=event.target.closest('form');if(form){delete form.dataset.replyTo;const indicator=form.querySelector('.reply-indicator');if(indicator){indicator.hidden=true;indicator.innerHTML='';}const replyInput=form.querySelector('input');if(replyInput)replyInput.placeholder='Write a reply…';}}
-if(d.share){const post=posts.find(p=>p._id===d.share),text=`${post.author?.name||'Lion Link user'} on Lion Link: ${post.text||''}`,shareUrl=`${location.origin}/post/${post._id}`;try{if(navigator.share)await navigator.share({title:'Lion Link',text,url:shareUrl});else{await navigator.clipboard.writeText(text+' '+shareUrl);toast('Post text and Lion Link link copied.')}}catch{}}});
+});
 let reelVideos=[], reelIndex=0;
 // Comment author photos and names always open that member's profile.
 document.addEventListener('click', event => {
@@ -596,7 +624,7 @@ openChat = function(id) {
   renderEvents = function() { originalRenderEvents(); const rail = $('#right-event-list'); if (rail) rail.innerHTML = campusEvents.map(event => `<button class="event live-event" type="button" data-view="events"><time><b>${new Date(event.startsAt).toLocaleString(undefined,{month:'short'}).toUpperCase()}</b><strong>${new Date(event.startsAt).getDate()}</strong></time><div><strong>${esc(event.title)}</strong><p>${new Date(event.startsAt).toLocaleString()}${event.location ? ` · ${esc(event.location)}` : ''}</p></div></button>`).join('') || '<p class="empty-profile">No upcoming events.</p>'; };
 
   const originalRenderMobileDrawers = renderMobileDrawers;
-  renderMobileDrawers = function(users) { originalRenderMobileDrawers(users); const left = $('#mobile-left-drawer'); if (left && !left.querySelector('.drawer-brand')) left.insertAdjacentHTML('afterbegin', '<a class="brand drawer-brand" href="#feed"><span class="brand-mark">L</span><span>Lion <b>Link</b></span></a>'); const right = $('#mobile-right-drawer'); if (right) right.innerHTML = `<h2>Upcoming events</h2>${campusEvents.map(event => `<button data-view="events">${esc(event.title)} · ${new Date(event.startsAt).toLocaleDateString(undefined,{month:'short',day:'numeric'})}</button>`).join('') || '<p>No upcoming events.</p>'}<h2>People you may know</h2>${(users || []).map(personMarkup).join('')}`; };
+  renderMobileDrawers = function(users) { originalRenderMobileDrawers(users); const left = $('#mobile-left-drawer'); if (left && !left.querySelector('.drawer-brand')) left.insertAdjacentHTML('afterbegin', '<a class="brand drawer-brand" href="#feed"><span class="brand-mark"><img src="/assets/lion-link-mark.png" alt="" width="36" height="36" decoding="async"></span><span>Lion <b>Link</b></span></a>'); const right = $('#mobile-right-drawer'); if (right) right.innerHTML = `<h2>Upcoming events</h2>${campusEvents.map(event => `<button data-view="events">${esc(event.title)} · ${new Date(event.startsAt).toLocaleDateString(undefined,{month:'short',day:'numeric'})}</button>`).join('') || '<p>No upcoming events.</p>'}<h2>People you may know</h2>${(users || []).map(personMarkup).join('')}`; };
 
   const originalLoadStories = loadStories;
   loadStories = async function() { await originalLoadStories(); const seen = seenStories(); document.querySelectorAll('.has-story').forEach(node => { const username = node.dataset.avatar || node.dataset.profileAvatar; const theirs = stories.filter(story => story.author?.username === username); node.classList.toggle('story-viewed', !!theirs.length && theirs.every(story => seen.has(story._id))); }); };
@@ -1394,24 +1422,57 @@ renderPosts = function() {
   $('#desktop-theme-toggle').onclick = toggleTheme;
 })();
 
-// Announcement badges reflect new official updates and clear as soon as the
-// announcement screen is opened, matching the notification interaction.
+// Announcement badges reflect new official updates (sidebar + mobile bottom nav) and
+// clear as soon as the announcement screen is opened, matching the notification interaction.
+// "Seen" is stored per person and measured with the server's own timestamps, so a phone
+// clock that is a little off can never leave a badge stuck on.
 (() => {
-  const refreshAnnouncementBadge = () => {
-    const badge = $('#announcement-count'); if (!badge) return;
-    const lastSeen = Number(localStorage.getItem('lionLinkAnnouncementsSeenAt') || 0);
-    const unread = announcements.filter(item => new Date(item.createdAt).getTime() > lastSeen).length;
-    badge.textContent = unread; badge.hidden = !unread;
+  const seenKey = () => 'lionLinkAnnouncementsSeenAt:' + (me?.id || 'guest');
+  const readSeen = () => {
+    try {
+      const own = localStorage.getItem(seenKey());
+      return Number(own !== null ? own : localStorage.getItem('lionLinkAnnouncementsSeenAt')) || 0;
+    } catch { return 0; }
   };
+  const timeOf = item => new Date(item.createdAt).getTime() || 0;
+  const isMine = item => me && String(item.author?._id || item.author?.id || item.author || '') === String(me.id);
+  const unreadCount = () => { const seen = readSeen(); return announcements.filter(item => timeOf(item) > seen && !isMine(item)).length; };
+  const refreshAnnouncementBadge = () => {
+    const unread = unreadCount(), label = unread > 99 ? '99+' : String(unread);
+    document.querySelectorAll('#announcement-count, .bottom-nav-announcement-count').forEach(badge => {
+      badge.textContent = label; badge.hidden = !unread;
+      badge.setAttribute('aria-label', unread ? `${unread} unread announcement${unread === 1 ? '' : 's'}` : '');
+    });
+  };
+  const markSeen = () => {
+    const newest = announcements.reduce((latest, item) => Math.max(latest, timeOf(item)), 0);
+    try { localStorage.setItem(seenKey(), String(Math.max(newest, readSeen()))); } catch {}
+    refreshAnnouncementBadge();
+  };
+  const viewing = () => !!document.querySelector('#announcements-view.active');
   const previousLoadAnnouncements = loadAnnouncements;
-  loadAnnouncements = async function() { await previousLoadAnnouncements(); refreshAnnouncementBadge(); };
+  loadAnnouncements = async function() {
+    await previousLoadAnnouncements.apply(this, arguments);
+    if (viewing()) markSeen(); else refreshAnnouncementBadge(); // already reading them? nothing is "new"
+  };
   const previousShow = show;
   show = function(view) {
-    previousShow(view);
-    if (view === 'announcements') {
-      localStorage.setItem('lionLinkAnnouncementsSeenAt', String(Date.now()));
-      refreshAnnouncementBadge();
+    const result = previousShow.apply(this, arguments);
+    if (view === 'announcements') markSeen();
+    return result;
+  };
+  // Pick up announcements published while the app is open. The server's tiny status check carries the
+  // time of the newest announcement; the list is only downloaded when that actually changes.
+  let handledMarker = null, fallbackAt = 0;
+  window.onAnnouncementPulse = marker => {
+    if (!token || !me) return;
+    if (marker === undefined || marker === null) { // API not updated yet: re-check every 2 minutes instead
+      if (Date.now() - fallbackAt > 120000) { fallbackAt = Date.now(); loadAnnouncements().catch(() => {}); }
+      return;
     }
+    const known = announcements.reduce((latest, item) => Math.max(latest, timeOf(item)), 0);
+    const first = handledMarker === null;
+    if (marker !== handledMarker) { handledMarker = marker; if (!first || marker > known) loadAnnouncements().catch(() => {}); }
   };
 })();
 
@@ -1573,7 +1634,7 @@ if(e.target.id==='x-edit-attach'&&attachedMedia){
     let result;
     try{result=await api('/conversations/pulse');}catch{result=null;}
     if(!result||typeof result.chat!=='string'){/* server not updated yet or unreachable: fall back to a full reload, at most every 20s */if(Date.now()-lastFullLoad>20000){lastFullLoad=Date.now();return loadChats();}return;}
-    window.__feedRecent=Array.isArray(result.feed)?result.feed:[];window.updateHomeDot?.(); /* green dot on Home */
+    window.__feedRecent=Array.isArray(result.feed)?result.feed:[];window.updateHomeDot?.(); window.onAnnouncementPulse?.(result.ann); /* green dot on Home */
     if(result.notif!==lastNotifMarker){lastNotifMarker=result.notif;await loadNotifications?.();} /* bell badge */
     if(result.chat!==lastChatMarker){lastChatMarker=result.chat;await loadChats();} /* DM badges, inbox, open chat, read ticks */
   };
@@ -2103,31 +2164,39 @@ $('.message-profile').onclick = async () => {
 })();
 
 // =====================================================================
-// Home button: jump to the top, pull in newer posts, refresh the badges.
+// Home button.
+//  • From anywhere else in the app (messages, profile, an open post…): just go Home.
+//  • While already on the Home feed: scroll to the top AND pull in any new posts.
 // Applies to the bottom nav, the sidebar, the drawer and the logo.
 // =====================================================================
 (() => {
-  let refreshing = false, lastRefreshAt = 0;
+  let refreshing = false;
   const scrollToTop = () => {
     window.scrollTo({ top: 0, behavior: 'smooth' });
     document.querySelector('.main-content')?.scrollTo?.({ top: 0, behavior: 'smooth' });
   };
+  const onHomeFeed = () => {
+    const panel = document.querySelector('#detail-panel');
+    return !!document.querySelector('#feed-view.active') && !(panel && !panel.hidden);
+  };
   const refreshHome = async () => {
-    const dotShowing = !!document.querySelector('.home-dot:not([hidden])');
-    if (refreshing || !token || (Date.now() - lastRefreshAt < 8000 && !dotShowing)) return; // tapping Home repeatedly just scrolls, unless new posts are waiting
-    refreshing = true; lastRefreshAt = Date.now();
+    if (refreshing || !token) return;
+    refreshing = true;
     const button = $('#refresh-feed'), label = button?.textContent;
     if (button) button.textContent = '↻ Refreshing…';
-    try { await Promise.allSettled([loadPosts({ silent: true }), loadNotifications?.(), loadChats?.()]); }
-    finally { refreshing = false; if (button) button.textContent = label || '↻ Refresh'; }
+    try {
+      await Promise.allSettled([loadPosts({ silent: true }), loadNotifications?.(), loadChats?.()]);
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+    } finally { refreshing = false; if (button) button.textContent = label || '↻ Refresh'; }
   };
-  // Capture phase: runs before the navigation handlers, then scrolls once the feed is on screen.
+  // Capture phase: runs before the navigation handlers, so we can tell whether you were ALREADY on Home.
   document.addEventListener('click', event => {
     const home = event.target.closest?.('[data-view="feed"], .brand');
     if (!home) return;
+    const alreadyHome = onHomeFeed();
     if (home.matches('.brand')) { event.preventDefault(); show('feed'); }
     requestAnimationFrame(scrollToTop);
-    refreshHome();
+    if (alreadyHome) refreshHome();
   }, true);
 })();
 
@@ -2238,7 +2307,7 @@ $('.message-profile').onclick = async () => {
   gate.className = 'terms-gate'; gate.id = 'terms-gate'; gate.hidden = true;
   gate.setAttribute('role', 'dialog'); gate.setAttribute('aria-modal', 'true'); gate.setAttribute('aria-labelledby', 'terms-gate-title');
   gate.innerHTML = `<section class="terms-gate-card">
-      <span class="brand-mark">L</span>
+      <span class="brand-mark"><img src="/assets/lion-link-mark.png" alt="" width="36" height="36" decoding="async"></span>
       <h2 id="terms-gate-title">Before you continue</h2>
       <p>Please review and agree to our Terms &amp; Conditions and Privacy Policy to keep using Lion Link.</p>
       <label class="consent-row"><input type="checkbox" id="terms-gate-check" /><span class="consent-text">I have read and agree to the <button type="button" class="consent-link" data-info="terms">Terms &amp; Conditions</button> and <button type="button" class="consent-link" data-info="privacy">Privacy Policy</button>.</span></label>
@@ -2788,4 +2857,81 @@ $('.message-profile').onclick = async () => {
     if (view === 'notifications') openNotifications();
     return result;
   };
+})();
+
+
+// =====================================================================
+// Share post: instant, and only the link.
+// The old version looked the post up, built a sentence with the whole post text and
+// waited on the share sheet to load it. Now the button shares just the post's link,
+// straight from the button's own id, with nothing to look up or wait for.
+// =====================================================================
+(() => {
+  const copyLink = async url => {
+    try { await navigator.clipboard.writeText(url); }
+    catch { // very old browsers / blocked clipboard
+      const box = document.createElement('textarea'); box.value = url; box.style.cssText = 'position:fixed;opacity:0'; document.body.append(box); box.select();
+      try { document.execCommand('copy'); } finally { box.remove(); }
+    }
+    toast('Post link copied.');
+  };
+  document.addEventListener('click', event => {
+    const button = event.target.closest?.('[data-share]'); if (!button) return;
+    event.preventDefault();
+    const url = `${location.origin}/post/${encodeURIComponent(button.dataset.share)}`;
+    // Called straight from the tap (no awaits before it) so the share sheet opens at once.
+    if (navigator.share) navigator.share({ url }).catch(error => { if (error?.name !== 'AbortError') copyLink(url); });
+    else copyLink(url);
+  });
+})();
+
+// =====================================================================
+// Announcement pictures open full screen when tapped (with Previous / Next for several).
+// =====================================================================
+(() => {
+  const openAnnouncementImage = (announcementId, index) => {
+    const images = (announcements.find(item => String(item._id) === String(announcementId))?.media || []).filter(item => item.type !== 'video');
+    const item = images[index]; if (!item) return;
+    const nav = images.length > 1 ? `<button type="button" data-announcement-step="${esc(String(announcementId))}:${index}:-1">‹ Previous</button><small>${index + 1} of ${images.length}</small><button type="button" data-announcement-step="${esc(String(announcementId))}:${index}:1">Next ›</button>` : '';
+    $('#media-modal-content').innerHTML = `<div class="modal-media"><img src="${safeUrl(item.url)}" alt="Announcement picture ${index + 1}"></div><div class="reels-actions">${nav}<a class="small-post" href="${safeUrl(item.url)}" download="lion-link-announcement-${index + 1}">Save picture</a></div>`;
+    $('#media-modal').hidden = false;
+  };
+  document.addEventListener('click', event => {
+    const picture = event.target.closest?.('[data-announcement-media]');
+    if (picture) {
+      event.preventDefault();
+      const [id, index] = picture.dataset.announcementMedia.split(':');
+      // Index among images only (videos play inline), so Previous/Next never lands on a video.
+      const all = announcements.find(item => String(item._id) === id)?.media || [];
+      const imageIndex = all.slice(0, Number(index)).filter(item => item.type !== 'video').length;
+      openAnnouncementImage(id, imageIndex); return;
+    }
+    const step = event.target.closest?.('[data-announcement-step]');
+    if (step) {
+      event.preventDefault();
+      const [id, index, direction] = step.dataset.announcementStep.split(':');
+      const count = (announcements.find(item => String(item._id) === id)?.media || []).filter(item => item.type !== 'video').length || 1;
+      openAnnouncementImage(id, (Number(index) + Number(direction) + count) % count);
+    }
+  });
+  document.addEventListener('keydown', event => {
+    if ((event.key === 'Enter' || event.key === ' ') && event.target.matches?.('[data-announcement-media]')) { event.preventDefault(); event.target.click(); }
+  });
+})();
+
+// =====================================================================
+// Opening screen: the logo stays up until the app has found out who is signed in
+// (or at most a few seconds), and never flashes away faster than 0.9 s.
+// =====================================================================
+(() => {
+  const splash = document.getElementById('splash'); if (!splash) return;
+  const started = performance.now(); let done = false;
+  const leave = () => {
+    if (done) return; done = true;
+    const wait = Math.max(0, 900 - (performance.now() - started));
+    setTimeout(() => { splash.classList.add('is-leaving'); setTimeout(() => splash.remove(), 600); }, wait);
+  };
+  const ready = () => document.readyState === 'complete' && (!token || me || performance.now() - started > 4000);
+  const timer = setInterval(() => { if (ready()) { clearInterval(timer); leave(); } }, 120);
+  setTimeout(() => { clearInterval(timer); leave(); }, 6000); // never trap anyone behind it
 })();

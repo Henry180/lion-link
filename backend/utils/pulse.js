@@ -78,4 +78,32 @@ async function seedRecent(Post) {
 // [[timestampMs, authorId], ...] newest first
 function recentPosts() { return recent.map(item => [item.at, item.author]); }
 
-module.exports = { touch, snapshot, noteNewPost, seedRecent, recentPosts };
+// ---- Newest announcement (powers the unread badge on the Announcement tab) ----
+// Just the time of the newest announcement, kept in memory and filled once from the
+// database on the first check after a restart. The app only downloads the announcement
+// list when this number is different from last time.
+let latestAnnouncement = 0, announcementsSeeded = false, announcementsSeeding = null;
+
+function noteAnnouncement(date) {
+  const at = new Date(date || Date.now()).getTime();
+  if (at > latestAnnouncement) latestAnnouncement = at;
+}
+
+async function seedAnnouncements(Announcement) {
+  if (announcementsSeeded) return;
+  if (announcementsSeeding) return announcementsSeeding;
+  announcementsSeeding = (async () => {
+    try {
+      const row = await Announcement.findOne().sort({ createdAt: -1 }).select("createdAt").lean();
+      if (row) noteAnnouncement(row.createdAt);
+      announcementsSeeded = true;
+    } catch (error) {
+      console.error("Could not seed latest announcement:", error.message);
+    } finally { announcementsSeeding = null; }
+  })();
+  return announcementsSeeding;
+}
+
+function latestAnnouncementAt() { return latestAnnouncement; }
+
+module.exports = { touch, snapshot, noteNewPost, seedRecent, recentPosts, noteAnnouncement, seedAnnouncements, latestAnnouncementAt };

@@ -2626,7 +2626,8 @@ body.dark .x-compose textarea { background:#000; color:#fff; }
 .bottom-nav button {
   position: relative;
 }
-.bottom-nav-message-count {
+.bottom-nav-message-count,
+.bottom-nav-announcement-count {
   position: absolute;
   top: 2px;
   right: 12px;
@@ -3195,3 +3196,16 @@ body.dark .nav-link.active, body.dark .nav-link:hover { background: #15191c; col
   .detail-body { padding: 10px 10px 96px; }
   .detail-sheet { max-width: 100%; }
 }
+
+/* Announcement pictures open full screen when tapped. */
+.announcement-media.is-openable { cursor: zoom-in; -webkit-tap-highlight-color: transparent; }
+.announcement-media.is-openable:focus-visible { outline: 2px solid var(--gold, #007a3d); outline-offset: 2px; }
+/* The hidden attribute must win over the badge's display rule. */
+.bottom-nav-announcement-count[hidden], .bottom-nav-message-count[hidden] { display: none; }
+
+/* ---- Lion Link logo (replaces the old "L" letter tile) ---- */
+.brand-mark { background: #032515; padding: 4px; box-sizing: border-box; width: 36px; height: 36px; border-radius: 10px; overflow: hidden; flex: none; }
+.brand-mark img { display: block; width: 100%; height: 100%; object-fit: contain; }
+.login-card .brand-mark, .terms-gate-card .brand-mark, .edit-card > .brand-mark { width: 68px; height: 68px; padding: 8px; border-radius: 18px; }
+.jumping-lion { background: #032515; border-radius: 11px; padding: 4px; box-sizing: border-box; }
+.jumping-lion img { display: block; width: 100%; height: 100%; object-fit: contain; }
