@@ -2935,3 +2935,33 @@ $('.message-profile').onclick = async () => {
   const timer = setInterval(() => { if (ready()) { clearInterval(timer); leave(); } }, 120);
   setTimeout(() => { clearInterval(timer); leave(); }, 6000); // never trap anyone behind it
 })();
+
+// =====================================================================
+// Profile tab: open instantly.
+// Tapping Profile used to rebuild EVERY post in the feed twice (once in the tap
+// handler, once inside show('profile')) just to draw your own posts. Now both
+// steps only rebuild the profile's own post list, so it opens straight away
+// however many posts are loaded. (Same approach as opening someone else's profile.)
+// =====================================================================
+(() => {
+  const profilePostsOnly = () => {
+    const username = (viewedProfile || me)?.username, list = $('#profile-posts'); if (!list) return;
+    list.innerHTML = posts.filter(post => post.author?.username === username).map(postMarkup).join('') || '<p class="empty-profile">No posts yet.</p>';
+  };
+  const withLightPosts = run => {
+    const fullRender = renderPosts; renderPosts = profilePostsOnly;
+    try { return run(); } finally { renderPosts = fullRender; }
+  };
+  // Any route into the profile screen (tab, drawer, link, back button).
+  const showBeforeProfileSpeedup = show;
+  show = function (view) {
+    return view === 'profile' ? withLightPosts(() => showBeforeProfileSpeedup.apply(this, arguments)) : showBeforeProfileSpeedup.apply(this, arguments);
+  };
+  // The tab's own click handler renders the profile before calling show(): lighten that step too.
+  // The click is handled synchronously, so the swap is undone right after it finishes.
+  document.addEventListener('click', event => {
+    if (!event.target.closest?.('[data-view="profile"]')) return;
+    const fullRender = renderPosts; renderPosts = profilePostsOnly;
+    setTimeout(() => { if (renderPosts === profilePostsOnly) renderPosts = fullRender; }, 0);
+  }, true);
+})();
